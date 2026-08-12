@@ -1,0 +1,27 @@
+[tool.ruff]
+# 155 reflects this codebase's actual existing style (many lines carry a
+# deliberately explanatory inline comment/docstring) rather than an arbitrary
+# tightened limit that would force a cosmetic reformat of otherwise working code.
+line-length = 155
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "C4", "B"]
+ignore = [
+    # B008: "no function calls in argument defaults" is a general Python
+    # anti-pattern rule, but Depends()/Query()/Header() in argument defaults
+    # is the required, idiomatic FastAPI pattern used throughout this codebase
+    # (dependency injection). Flagging it here would just be lint noise on
+    # every single route -- not a real issue.
+    "B008",
+    # C408: dict(...) calls (vs. {...} literals) are used deliberately and
+    # consistently for the plan-tier seed data in billing/service.py, where
+    # the call-style reads more like a config record with named fields than
+    # a literal would. Pre-existing, consistent style choice, not a defect.
+    "C408",
+]
+
+[tool.mypy]
+python_version = "3.12"
+plugins = ["pydantic.mypy"]
+ignore_missing_imports = true

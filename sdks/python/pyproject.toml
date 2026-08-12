@@ -1,0 +1,30 @@
+[project]
+name = "relayhub"
+version = "1.0.0"
+description = "Official Python SDK for the RelayHub webhook and event delivery API."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = ["httpx>=0.27"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "mypy>=1.10", "ruff>=0.5"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["relayhub*"]
+
+[tool.ruff]
+line-length = 130
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+# Every resource method returns Transport.request()'s result directly, typed via
+# the method's own return annotation (e.g. -> EndpointOut) -- that's a deliberate
+# boundary cast from the untyped JSON response into a TypedDict shape, which is
+# exactly what warn_return_any flags. Everything else stays strict.
+warn_return_any = false

@@ -1,0 +1,125 @@
+# Production compose file for RelayHub.
+#
+# This is a standalone file, not an overlay on docker-compose.yml. An
+# overlay (`-f docker-compose.yml -f docker-compose.prod.yml`) was tried first, but
+# Compose's default list-merge behavior *appends* to `ports`/`volumes` rather than
+# replacing them, so an overlay can't cleanly drop the dev file's bind-mounts or
+# published Postgres/Redis ports -- verified directly against this exact base file
+# with `docker-compose config` during Phase E (the merged output still carried
+# `--reload`, the source bind-mount, and 5432/6379 published to the host). Rather
+# than depend on `!override` YAML-tag support that this environment's Compose
+# version doesn't have, this file just states the production topology directly.
+#
+# It reuses the exact same architecture as docker-compose.yml (dev): the same
+# backend Dockerfile/image, the same Postgres/Redis/Celery services, the same
+# environment variables from backend/.env. Nothing new was introduced. The only
+# real differences from the dev file:
+#   - no bind-mounts / no `--reload` (run the built image as-is)
+#   - Postgres/Redis are not published to the host (only reachable on the compose
+#     network, by the api/worker/beat services)
+#   - `api` runs multiple uvicorn workers
+#   - restart policies
+#   - a `web` service for apps/web (the dev file has no frontend service at all)
+#
+# Usage:
+#   cp backend/.env.example backend/.env   # then fill in real production values
+#   docker compose -f infra/docker/docker-compose.prod.yml up -d --build
+
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: relayhub
+      POSTGRES_PASSWORD: relayhub
+      POSTGRES_DB: relayhub
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U relayhub"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile
+    env_file:
+      - ../../backend/.env
+    environment:
+      ENV: production
+      DEBUG: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    command: >
+      sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4"
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile
+    env_file:
+      - ../../backend/.env
+    environment:
+      ENV: production
+      DEBUG: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: celery -A app.workers.celery_app worker --loglevel=info
+    restart: unless-stopped
+
+  beat:
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile
+    env_file:
+      - ../../backend/.env
+    environment:
+      ENV: production
+      DEBUG: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: celery -A app.workers.celery_app beat --loglevel=info
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ../../
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    depends_on:
+      - api
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:

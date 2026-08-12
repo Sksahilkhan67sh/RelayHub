@@ -1,0 +1,68 @@
+# RelayHub — root .gitignore
+# Prevents local environment files and build/cache artifacts from ever being
+# committed. Applies repo-wide (backend, apps/web, sdks, cli, examples).
+
+# --- Environment / secrets -------------------------------------------------
+.env
+.env.local
+.env.development
+.env.production
+.env.test
+.env.*.local
+!*.env.example
+!.env.example
+
+# --- Python ------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+*.egg-info/
+.venv/
+venv/
+.coverage
+coverage/
+htmlcov/
+
+# --- Node / TypeScript / Next.js ----------------------------------------
+node_modules/
+.next/
+out/
+dist/
+dist-tests/
+tsconfig.tsbuildinfo
+*.tsbuildinfo
+.npm/
+npm-debug.log*
+.eslintcache
+
+# --- Go ------------------------------------------------------------------
+*.test
+sdks/go/**/*.exe
+
+# --- Java / Maven ----------------------------------------------------------
+target/
+*.class
+
+# --- Docker / infra ---------------------------------------------------------
+*.pid
+
+# --- Logs --------------------------------------------------------------
+*.log
+logs/
+
+# --- OS / editor -------------------------------------------------------
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+*~
+
+# --- Backups / local data -------------------------------------------------
+backups/
+*.dump
+*.sql.gz

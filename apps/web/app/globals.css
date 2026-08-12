@@ -1,0 +1,96 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-app: theme(colors.graphite.50);
+  --bg-surface: #ffffff;
+  --bg-surface-hover: theme(colors.graphite.100);
+  --border-hairline: theme(colors.graphite.200);
+  --text-primary: theme(colors.graphite.950);
+  --text-secondary: theme(colors.graphite.700);
+  --text-muted: theme(colors.graphite.600);
+  --sidebar-bg: theme(colors.graphite.950);
+  --sidebar-text: theme(colors.graphite.200);
+  --sidebar-text-active: #ffffff;
+}
+
+.dark {
+  --bg-app: theme(colors.graphite.950);
+  --bg-surface: theme(colors.graphite.900);
+  --bg-surface-hover: theme(colors.graphite.800);
+  --border-hairline: theme(colors.graphite.800);
+  --text-primary: theme(colors.graphite.50);
+  --text-secondary: theme(colors.graphite.200);
+  --text-muted: theme(colors.graphite.400);
+  --sidebar-bg: #0E1013;
+  --sidebar-text: theme(colors.graphite.400);
+  --sidebar-text-active: #ffffff;
+}
+
+* {
+  border-color: var(--border-hairline);
+}
+
+body {
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-feature-settings: "cv11", "ss01";
+  -webkit-font-smoothing: antialiased;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+:focus-visible {
+  outline: 2px solid theme(colors.signal.amber);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@keyframes relay-pulse {
+  0% {
+    left: 0%;
+    opacity: 0;
+  }
+  12% {
+    opacity: 1;
+  }
+  88% {
+    opacity: 1;
+  }
+  100% {
+    left: 100%;
+    opacity: 0;
+  }
+}
+
+@keyframes relay-hub-glow {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(193, 127, 43, 0.35);
+  }
+  50% {
+    box-shadow: 0 0 0 10px rgba(193, 127, 43, 0);
+  }
+}
+
+@keyframes relay-drift {
+  0% {
+    transform: translate(0, 0);
+  }
+  50% {
+    transform: translate(-14px, 10px);
+  }
+  100% {
+    transform: translate(0, 0);
+  }
+}

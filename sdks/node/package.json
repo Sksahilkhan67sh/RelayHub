@@ -1,0 +1,30 @@
+{
+  "name": "@relayhub/sdk",
+  "version": "1.0.0",
+  "description": "Official Node.js / TypeScript SDK for the RelayHub webhook and event delivery API.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "pretest": "tsc -p tsconfig.test.json",
+    "test": "node --test dist-tests/tests/*.test.js",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.3",
+    "@types/node": "^20.14.10"
+  },
+  "keywords": ["relayhub", "webhooks", "sdk", "api-client"]
+}
