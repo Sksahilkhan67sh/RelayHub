@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Any, Protocol
 
+from stripe import SignatureVerificationError
+
 
 class StripeWebhookVerificationError(Exception):
     pass
@@ -71,7 +73,7 @@ class RealStripeClient:
             kwargs["subscription_data"] = {"trial_period_days": trial_days}
 
         session = self._stripe.checkout.Session.create(**kwargs)
-        return CheckoutSessionResult(session_id=session.id, checkout_url=session.url)
+        return CheckoutSessionResult(session_id=session.id, checkout_url=session.url or "")
 
     def create_portal_session(self, *, stripe_customer_id: str, return_url: str) -> PortalSessionResult:
         session = self._stripe.billing_portal.Session.create(customer=stripe_customer_id, return_url=return_url)
@@ -80,7 +82,7 @@ class RealStripeClient:
     def construct_webhook_event(self, *, payload: bytes, signature_header: str) -> dict[str, Any]:
         try:
             event = self._stripe.Webhook.construct_event(payload, signature_header, self._webhook_secret)
-        except (ValueError, self._stripe.error.SignatureVerificationError) as e:
+        except (ValueError, SignatureVerificationError) as e:
             raise StripeWebhookVerificationError(str(e)) from e
         return event
 
@@ -88,7 +90,7 @@ class RealStripeClient:
         if at_period_end:
             self._stripe.Subscription.modify(stripe_subscription_id, cancel_at_period_end=True)
         else:
-            self._stripe.Subscription.delete(stripe_subscription_id)
+            self._stripe.Subscription.delete(stripe_subscription_id)  # type: ignore[arg-type]
 
 
 @dataclass

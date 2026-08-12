@@ -3,16 +3,17 @@ from __future__ import annotations
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from typing import Any, Sequence
 
 
-def _envelope(*, code: str, message: str, request_id: str | None, details: object = None) -> dict:
-    body = {"error": {"code": code, "message": message, "request_id": request_id}}
+def _envelope(*, code: str, message: str, request_id: str | None, details: object = None) -> dict[str, Any]:
+    body: dict[str, Any] = {"error": {"code": code, "message": message, "request_id": request_id}}
     if details is not None:
         body["error"]["details"] = details
     return body
 
 
-def _sanitize_validation_errors(errors: list[dict]) -> list[dict]:
+def _sanitize_validation_errors(errors: Sequence[dict]) -> list[dict]:
     """
     Pydantic v2's exc.errors() includes the original exception instance at
     error['ctx']['error'] for validators that raise ValueError/AssertionError. That's

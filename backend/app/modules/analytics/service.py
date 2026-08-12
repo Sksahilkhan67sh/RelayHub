@@ -100,7 +100,7 @@ async def get_deliveries_over_time(
     end_date: datetime | None = None,
 ):
     dialect_name = dialect_name_for(db)
-    bucket_expr = truncate_timestamp(DeliveryJob.queued_at, granularity=granularity, dialect_name=dialect_name)
+    bucket_expr = truncate_timestamp(DeliveryJob.queued_at, granularity=granularity, dialect_name=dialect_name)  # type: ignore[arg-type]
 
     query = (
         select(

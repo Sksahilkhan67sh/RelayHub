@@ -20,7 +20,8 @@ ModelT = TypeVar("ModelT")
 def tenant_select(model: type[ModelT], organization_id: uuid.UUID) -> Select:
     if not hasattr(model, "organization_id"):
         raise TypeError(f"{model.__name__} is not tenant-scoped (missing organization_id column)")
-    return select(model).where(
-        model.organization_id == organization_id,  # type: ignore[attr-defined]
-        getattr(model, "deleted_at", None).is_(None) if hasattr(model, "deleted_at") else True,
-    )
+    conditions = [model.organization_id == organization_id]  # type: ignore[attr-defined]
+    deleted_at = getattr(model, "deleted_at", None)
+    if deleted_at is not None:
+        conditions.append(deleted_at.is_(None))
+    return select(model).where(*conditions)

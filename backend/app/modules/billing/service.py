@@ -199,6 +199,8 @@ async def _find_subscription_by_stripe_id(db: AsyncSession, stripe_subscription_
 
 async def _handle_subscription_updated(db: AsyncSession, data_object: dict) -> None:
     stripe_subscription_id = data_object.get("id")
+    if not stripe_subscription_id:
+        return
     subscription = await _find_subscription_by_stripe_id(db, stripe_subscription_id)
     if not subscription:
         return
@@ -222,6 +224,8 @@ async def _handle_subscription_updated(db: AsyncSession, data_object: dict) -> N
 
 async def _handle_subscription_deleted(db: AsyncSession, data_object: dict) -> None:
     stripe_subscription_id = data_object.get("id")
+    if not stripe_subscription_id:
+        return
     subscription = await _find_subscription_by_stripe_id(db, stripe_subscription_id)
     if not subscription:
         return
