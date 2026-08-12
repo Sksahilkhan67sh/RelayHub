@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from typing import Any, Sequence
+
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from typing import Any, Sequence
 
 
 def _envelope(*, code: str, message: str, request_id: str | None, details: object = None) -> dict[str, Any]:
