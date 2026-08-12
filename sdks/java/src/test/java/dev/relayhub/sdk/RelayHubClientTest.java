@@ -107,7 +107,7 @@ class RelayHubClientTest {
         server.start();
         RelayHubClient client = RelayHubClient.builder()
                 .apiKey("test_key").baseUrl("http://localhost:" + server.getAddress().getPort()).maxRetries(0).build();
-        assertDoesNotThrow(client.getAuth()::logout);
+        assertDoesNotThrow(() -> { client.getAuth().logout(); });
     }
 
     @Test
