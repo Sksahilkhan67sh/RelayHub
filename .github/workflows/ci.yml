@@ -163,6 +163,8 @@ jobs:
         run: docker build -f backend/Dockerfile -t relayhub-backend:ci backend/
       - name: Build frontend image
         run: docker build -f apps/web/Dockerfile -t relayhub-web:ci .
+      - name: Create placeholder env file
+        run: cp backend/.env.example backend/.env
       - name: Validate compose files
         run: |
           docker compose -f infra/docker/docker-compose.yml config -q
