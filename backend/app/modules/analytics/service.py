@@ -52,9 +52,9 @@ async def get_summary(
     per_event_jobs_query = (
         select(
             DeliveryJob.event_id,
-            func.bool_or(DeliveryJob.status.in_(in_flight_statuses)).label("has_pending"),
-            func.bool_or(DeliveryJob.status == DeliveryJobStatus.DEAD_LETTER.value).label("has_dead_letter"),
-            func.bool_or(DeliveryJob.status == DeliveryJobStatus.FAILED.value).label("has_failed"),
+            func.max(case((DeliveryJob.status.in_(in_flight_statuses), 1), else_=0)).label("has_pending"),
+            func.max(case((DeliveryJob.status == DeliveryJobStatus.DEAD_LETTER.value, 1), else_=0)).label("has_dead_letter"),
+            func.max(case((DeliveryJob.status == DeliveryJobStatus.FAILED.value, 1), else_=0)).label("has_failed"),
         )
         .select_from(DeliveryJob)
         .where(DeliveryJob.organization_id == organization_id, DeliveryJob.deleted_at.is_(None))
@@ -67,9 +67,9 @@ async def get_summary(
     per_event_jobs_query = per_event_jobs_query.group_by(DeliveryJob.event_id).subquery()
 
     event_status = case(
-        (per_event_jobs_query.c.has_pending, "retrying"),
-        (per_event_jobs_query.c.has_dead_letter, "dead_letter"),
-        (per_event_jobs_query.c.has_failed, "failed"),
+        (per_event_jobs_query.c.has_pending == 1, "retrying"),
+        (per_event_jobs_query.c.has_dead_letter == 1, "dead_letter"),
+        (per_event_jobs_query.c.has_failed == 1, "failed"),
         else_="success",
     )
 
@@ -142,9 +142,9 @@ async def get_deliveries_over_time(
         select(
             DeliveryJob.event_id,
             func.min(DeliveryJob.queued_at).label("event_queued_at"),
-            func.bool_or(DeliveryJob.status.in_(in_flight_statuses)).label("has_pending"),
-            func.bool_or(
-                DeliveryJob.status.in_((DeliveryJobStatus.FAILED.value, DeliveryJobStatus.DEAD_LETTER.value))
+            func.max(case((DeliveryJob.status.in_(in_flight_statuses), 1), else_=0)).label("has_pending"),
+            func.max(
+                case((DeliveryJob.status.in_((DeliveryJobStatus.FAILED.value, DeliveryJobStatus.DEAD_LETTER.value)), 1), else_=0)
             ).label("has_failure"),
         )
         .select_from(DeliveryJob)
@@ -163,8 +163,8 @@ async def get_deliveries_over_time(
     # once every fanned-out job has succeeded (no pending, no failure); "failed"
     # covers failed/dead-lettered events; still-pending events are counted in the
     # bucket total but not in either bucket, same as the original per-job behavior.
-    is_success = per_event_query.c.has_pending.is_(False) & per_event_query.c.has_failure.is_(False)
-    is_failed = per_event_query.c.has_failure.is_(True)
+    is_success = (per_event_query.c.has_pending == 0) & (per_event_query.c.has_failure == 0)
+    is_failed = per_event_query.c.has_failure == 1
 
     query = (
         select(
