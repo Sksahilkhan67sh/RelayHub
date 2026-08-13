@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, RotateCw, Ban, Play, Copy, Check, Send } from "lucide-react";
+import { ArrowLeft, RotateCw, Ban, Play, Copy, Check, Send, Trash2 } from "lucide-react";
 import { api, ApiError } from "@/lib/api-client";
 import type { EndpointOut, EndpointSecretOut, DeliveryLogEntryOut } from "@/lib/types";
 import { Button } from "@/components/ui/button";
@@ -18,6 +18,7 @@ export default function EndpointDetailPage() {
   const [deliveries, setDeliveries] = useState<DeliveryLogEntryOut[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [rotatedSecret, setRotatedSecret] = useState<EndpointSecretOut | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   async function load() {
     try {
@@ -57,6 +58,25 @@ export default function EndpointDetailPage() {
       setRotatedSecret(rotated);
     } catch (err) {
       alert(err instanceof ApiError ? err.message : "Failed to rotate secret");
+    }
+  }
+
+  async function handleDelete() {
+    if (!endpoint) return;
+    if (
+      !confirm(
+        `Delete "${endpoint.name}"? Events will stop being delivered here immediately. Its past delivery history is kept for your records, but this endpoint itself can't be recovered.`
+      )
+    ) {
+      return;
+    }
+    setDeleting(true);
+    try {
+      await api.delete(`/v1/endpoints/${endpoint.id}`);
+      router.push("/endpoints");
+    } catch (err) {
+      alert(err instanceof ApiError ? err.message : "Failed to delete endpoint");
+      setDeleting(false);
     }
   }
 
@@ -116,6 +136,10 @@ export default function EndpointDetailPage() {
           <Button variant={endpoint.is_active ? "danger" : "primary"} size="sm" onClick={handleToggleActive}>
             {endpoint.is_active ? <Ban className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
             {endpoint.is_active ? "Disable" : "Enable"}
+          </Button>
+          <Button variant="danger" size="sm" onClick={handleDelete} loading={deleting}>
+            <Trash2 className="h-3.5 w-3.5" />
+            Delete
           </Button>
         </div>
       </div>
