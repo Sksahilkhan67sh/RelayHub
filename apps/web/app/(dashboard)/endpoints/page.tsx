@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, Badge } from "@/components/ui/card";
 import { Modal } from "@/components/ui/modal";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { EmptyState } from "@/components/ui/empty-state";
 import { TableSkeleton } from "@/components/ui/skeleton";
 import { StatusDot, statusToSignalColor } from "@/components/ui/status-dot";
@@ -18,7 +19,8 @@ export default function EndpointsPage() {
   const [endpoints, setEndpoints] = useState<EndpointOut[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<EndpointOut | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   async function load() {
     try {
@@ -33,22 +35,15 @@ export default function EndpointsPage() {
     load();
   }, []);
 
-  async function handleDelete(ep: EndpointOut) {
-    if (
-      !confirm(
-        `Delete "${ep.name}"? Events will stop being delivered here immediately. Its past delivery history is kept for your records, but this endpoint itself can't be recovered.`
-      )
-    ) {
-      return;
-    }
-    setDeletingId(ep.id);
+  async function handleDelete() {
+    if (!deleteTarget) return;
+    setDeleteError(null);
     try {
-      await api.delete(`/v1/endpoints/${ep.id}`);
+      await api.delete(`/v1/endpoints/${deleteTarget.id}`);
+      setDeleteTarget(null);
       await load();
     } catch (err) {
-      alert(err instanceof ApiError ? err.message : "Failed to delete endpoint");
-    } finally {
-      setDeletingId(null);
+      setDeleteError(err instanceof ApiError ? err.message : "Failed to delete endpoint");
     }
   }
 
@@ -119,11 +114,10 @@ export default function EndpointsPage() {
                       onClick={(e) => {
                         e.preventDefault();
                         e.stopPropagation();
-                        handleDelete(ep);
+                        setDeleteTarget(ep);
                       }}
-                      disabled={deletingId === ep.id}
                       title="Delete endpoint"
-                      className="rounded p-1 text-graphite-400 hover:bg-signal-red-soft hover:text-signal-red disabled:opacity-50"
+                      className="rounded p-1 text-graphite-400 hover:bg-signal-red-soft hover:text-signal-red"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
@@ -136,6 +130,19 @@ export default function EndpointsPage() {
       </Card>
 
       <CreateEndpointModal open={createOpen} onClose={() => setCreateOpen(false)} onCreated={() => { setCreateOpen(false); load(); }} />
+
+      <ConfirmDialog
+        open={!!deleteTarget}
+        onClose={() => { setDeleteTarget(null); setDeleteError(null); }}
+        onConfirm={handleDelete}
+        title="Delete endpoint"
+        description={
+          `Delete "${deleteTarget?.name ?? "this endpoint"}"? Events will stop being delivered here immediately. Its past delivery history is kept for your records, but this endpoint itself can't be recovered.` +
+          (deleteError ? ` — ${deleteError}` : "")
+        }
+        confirmLabel="Delete"
+        danger
+      />
     </div>
   );
 }
