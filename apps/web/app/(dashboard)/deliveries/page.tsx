@@ -41,7 +41,8 @@ function groupByEvent(deliveries: DeliveryLogEntryOut[]): EventGroup[] {
   }
   return Array.from(map.entries())
     .map(([event_id, jobs]) => {
-      const first = jobs[0];
+      // Safe: this group only exists because at least one job was pushed into it above.
+      const first = jobs[0]!;
       return {
         event_id,
         event_type: first.event_type,
