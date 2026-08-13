@@ -29,6 +29,67 @@ def uuid_from(s: str):
 
 
 @pytest.mark.asyncio
+async def test_publish_event_with_endpoint_ids_restricts_delivery(client, unique_email, db_session):
+    from tests.conftest import upgrade_to_pro
+
+    token = await register_and_get_token(client, unique_email)
+    await upgrade_to_pro(client, db_session, token)
+    endpoint_a = await create_endpoint(client, token, environment="test")
+    endpoint_b = await create_endpoint(client, token, environment="test")
+    api_key = await create_api_key(client, token, environment="test")
+
+    # With no endpoint_ids: fans out to both (unchanged default behavior).
+    resp = await client.post(
+        "/v1/events",
+        json={"event": "payment.success", "payload": {}, "environment": "test"},
+        headers={"X-RelayHub-Api-Key": api_key},
+    )
+    assert resp.status_code == 201, resp.text
+    assert len(resp.json()["delivery_jobs"]) == 2
+
+    # With endpoint_ids: delivers ONLY to the selected endpoint, not both.
+    resp = await client.post(
+        "/v1/events",
+        json={"event": "payment.success", "payload": {}, "environment": "test", "endpoint_ids": [endpoint_a]},
+        headers={"X-RelayHub-Api-Key": api_key},
+    )
+    assert resp.status_code == 201, resp.text
+    jobs = resp.json()["delivery_jobs"]
+    assert len(jobs) == 1
+    assert jobs[0]["endpoint_id"] == endpoint_a
+    assert jobs[0]["endpoint_id"] != endpoint_b
+
+
+@pytest.mark.asyncio
+async def test_publish_event_with_endpoint_ids_bypasses_subscription_filter(client, unique_email):
+    token = await register_and_get_token(client, unique_email)
+    # Subscribed only to "other.event" -- would NOT normally match "payment.success".
+    endpoint_id = await create_endpoint(client, token, environment="test", subscribed_event_types=["other.event"])
+    api_key = await create_api_key(client, token, environment="test")
+
+    # Default fan-out: correctly matches nothing, since the endpoint isn't subscribed.
+    resp = await client.post(
+        "/v1/events",
+        json={"event": "payment.success", "payload": {}, "environment": "test"},
+        headers={"X-RelayHub-Api-Key": api_key},
+    )
+    assert resp.status_code == 201, resp.text
+    assert len(resp.json()["delivery_jobs"]) == 0
+
+    # Explicit selection overrides the subscription filter -- an explicit pick is a
+    # stronger signal than a standing subscribed_event_types list.
+    resp = await client.post(
+        "/v1/events",
+        json={"event": "payment.success", "payload": {}, "environment": "test", "endpoint_ids": [endpoint_id]},
+        headers={"X-RelayHub-Api-Key": api_key},
+    )
+    assert resp.status_code == 201, resp.text
+    jobs = resp.json()["delivery_jobs"]
+    assert len(jobs) == 1
+    assert jobs[0]["endpoint_id"] == endpoint_id
+
+
+@pytest.mark.asyncio
 async def test_publish_event_requires_api_key(client):
     resp = await client.post("/v1/events", json={"event": "payment.success", "payload": {}})
     assert resp.status_code == 401
