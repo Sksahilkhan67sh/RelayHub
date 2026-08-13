@@ -16,7 +16,7 @@ set -e
 
 alembic upgrade head
 
-celery -A app.workers.celery_app worker --loglevel=info &
+celery -A app.workers.celery_app worker --loglevel=info --pool=solo --concurrency=1 &
 WORKER_PID=$!
 
 uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} &
