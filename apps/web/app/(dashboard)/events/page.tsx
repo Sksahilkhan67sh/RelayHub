@@ -12,6 +12,18 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { TableSkeleton } from "@/components/ui/skeleton";
 import { StatusDot, statusToSignalColor } from "@/components/ui/status-dot";
 
+const IN_FLIGHT = new Set(["queued", "processing", "retrying"]);
+
+// Same worst-case classification used on the Dashboard, Logs, and Deliveries pages:
+// any job still in flight -> "retrying"; else any dead-lettered -> "dead_letter";
+// else any failed -> "failed"; else (every job succeeded) -> "success".
+function classifyJobs(jobs: EventOut["delivery_jobs"]) {
+  if (jobs.some((j) => IN_FLIGHT.has(j.status))) return "retrying";
+  if (jobs.some((j) => j.status === "dead_letter")) return "dead_letter";
+  if (jobs.some((j) => j.status === "failed")) return "failed";
+  return "success";
+}
+
 export default function EventsPage() {
   const [events, setEvents] = useState<EventOut[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -65,38 +77,57 @@ export default function EventsPage() {
               </tr>
             </thead>
             <tbody>
-              {events.map((ev) => (
-                <React.Fragment key={ev.id}>
-                  <tr
-                    onClick={() => setExpandedId(expandedId === ev.id ? null : ev.id)}
-                    className="cursor-pointer border-b border-graphite-50 last:border-0 hover:bg-graphite-50 dark:border-graphite-800/60 dark:hover:bg-graphite-800/40"
-                  >
-                    <td className="px-4 py-2.5 font-mono text-graphite-950 dark:text-graphite-50">{ev.event}</td>
-                    <td className="px-4 py-2.5 text-graphite-600 dark:text-graphite-400">{ev.environment}</td>
-                    <td className="px-4 py-2.5">
-                      <div className="flex gap-1">
+              {events.map((ev) => {
+                const successCount = ev.delivery_jobs.filter((j) => j.status === "success").length;
+                return (
+                  <React.Fragment key={ev.id}>
+                    <tr
+                      onClick={() => setExpandedId(expandedId === ev.id ? null : ev.id)}
+                      className="cursor-pointer border-b border-graphite-50 last:border-0 hover:bg-graphite-50 dark:border-graphite-800/60 dark:hover:bg-graphite-800/40"
+                    >
+                      <td className="px-4 py-2.5 font-mono text-graphite-950 dark:text-graphite-50">{ev.event}</td>
+                      <td className="px-4 py-2.5 text-graphite-600 dark:text-graphite-400">{ev.environment}</td>
+                      <td className="px-4 py-2.5">
                         {ev.delivery_jobs.length === 0 ? (
                           <span className="text-graphite-400">No matching endpoints</span>
                         ) : (
-                          ev.delivery_jobs.map((j) => <StatusDot key={j.id} color={statusToSignalColor(j.status)} />)
+                          <div className="flex items-center gap-2">
+                            <StatusDot color={statusToSignalColor(classifyJobs(ev.delivery_jobs))} label={classifyJobs(ev.delivery_jobs)} />
+                            <span className="text-graphite-500">
+                              {successCount}/{ev.delivery_jobs.length} succeeded
+                            </span>
+                          </div>
                         )}
-                      </div>
-                    </td>
-                    <td className="tabular px-4 py-2.5 text-graphite-600 dark:text-graphite-400">
-                      {new Date(ev.created_at).toLocaleString()}
-                    </td>
-                  </tr>
-                  {expandedId === ev.id && (
-                    <tr className="border-b border-graphite-50 bg-graphite-50 dark:border-graphite-800/60 dark:bg-graphite-800/30">
-                      <td colSpan={4} className="px-4 py-3">
-                        <pre className="overflow-x-auto font-mono text-[11px] text-graphite-700 dark:text-graphite-300">
-                          {JSON.stringify(ev.payload, null, 2)}
-                        </pre>
+                      </td>
+                      <td className="tabular px-4 py-2.5 text-graphite-600 dark:text-graphite-400">
+                        {new Date(ev.created_at).toLocaleString()}
                       </td>
                     </tr>
-                  )}
-                </React.Fragment>
-              ))}
+                    {expandedId === ev.id && (
+                      <tr className="border-b border-graphite-50 bg-graphite-50 dark:border-graphite-800/60 dark:bg-graphite-800/30">
+                        <td colSpan={4} className="px-4 py-3">
+                          {ev.delivery_jobs.length > 0 && (
+                            <div className="mb-3 flex flex-col gap-1">
+                              <span className="text-[11px] font-medium text-graphite-500">Per-endpoint deliveries</span>
+                              {ev.delivery_jobs.map((j) => (
+                                <div key={j.id} className="flex items-center gap-2 font-mono text-[11px] text-graphite-600 dark:text-graphite-400">
+                                  <StatusDot color={statusToSignalColor(j.status)} />
+                                  endpoint {j.endpoint_id.slice(0, 8)}…
+                                  <span className="text-graphite-400">{j.status}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          <span className="mb-1 block text-[11px] font-medium text-graphite-500">Payload</span>
+                          <pre className="overflow-x-auto font-mono text-[11px] text-graphite-700 dark:text-graphite-300">
+                            {JSON.stringify(ev.payload, null, 2)}
+                          </pre>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                );
+              })}
             </tbody>
           </table>
         )}
