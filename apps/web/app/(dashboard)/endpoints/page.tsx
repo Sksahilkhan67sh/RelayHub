@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
-import { Webhook, Plus } from "lucide-react";
+import { Webhook, Plus, Trash2 } from "lucide-react";
 import { api, ApiError } from "@/lib/api-client";
 import type { EndpointOut } from "@/lib/types";
 import { BUILT_IN_EVENT_TYPES } from "@/lib/types";
@@ -18,6 +18,7 @@ export default function EndpointsPage() {
   const [endpoints, setEndpoints] = useState<EndpointOut[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   async function load() {
     try {
@@ -31,6 +32,25 @@ export default function EndpointsPage() {
   useEffect(() => {
     load();
   }, []);
+
+  async function handleDelete(ep: EndpointOut) {
+    if (
+      !confirm(
+        `Delete "${ep.name}"? Events will stop being delivered here immediately. Its past delivery history is kept for your records, but this endpoint itself can't be recovered.`
+      )
+    ) {
+      return;
+    }
+    setDeletingId(ep.id);
+    try {
+      await api.delete(`/v1/endpoints/${ep.id}`);
+      await load();
+    } catch (err) {
+      alert(err instanceof ApiError ? err.message : "Failed to delete endpoint");
+    } finally {
+      setDeletingId(null);
+    }
+  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -70,6 +90,7 @@ export default function EndpointsPage() {
                 <th className="px-4 py-2 font-medium">Events</th>
                 <th className="px-4 py-2 font-medium">Health</th>
                 <th className="px-4 py-2 font-medium">Status</th>
+                <th className="px-4 py-2 font-medium"></th>
               </tr>
             </thead>
             <tbody>
@@ -92,6 +113,20 @@ export default function EndpointsPage() {
                   </td>
                   <td className="px-4 py-2.5">
                     <StatusDot color={ep.is_active ? "green" : "gray"} label={ep.is_active ? "Active" : "Disabled"} />
+                  </td>
+                  <td className="px-4 py-2.5 text-right">
+                    <button
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        handleDelete(ep);
+                      }}
+                      disabled={deletingId === ep.id}
+                      title="Delete endpoint"
+                      className="rounded p-1 text-graphite-400 hover:bg-signal-red-soft hover:text-signal-red disabled:opacity-50"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
                   </td>
                 </tr>
               ))}
