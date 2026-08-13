@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import React, { useEffect, useState, type FormEvent } from "react";
 import { Zap, Send, ChevronDown, ChevronUp } from "lucide-react";
 import { api, apiFetch, ApiError } from "@/lib/api-client";
-import type { EventOut } from "@/lib/types";
+import type { EventOut, EndpointOut } from "@/lib/types";
 import { BUILT_IN_EVENT_TYPES } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -66,9 +66,8 @@ export default function EventsPage() {
             </thead>
             <tbody>
               {events.map((ev) => (
-                <>
+                <React.Fragment key={ev.id}>
                   <tr
-                    key={ev.id}
                     onClick={() => setExpandedId(expandedId === ev.id ? null : ev.id)}
                     className="cursor-pointer border-b border-graphite-50 last:border-0 hover:bg-graphite-50 dark:border-graphite-800/60 dark:hover:bg-graphite-800/40"
                   >
@@ -96,7 +95,7 @@ export default function EventsPage() {
                       </td>
                     </tr>
                   )}
-                </>
+                </React.Fragment>
               ))}
             </tbody>
           </table>
@@ -110,8 +109,30 @@ function PublishTester({ onPublished }: { onPublished: () => void }) {
   const [apiKey, setApiKey] = useState("");
   const [eventType, setEventType] = useState<string>(BUILT_IN_EVENT_TYPES[0]);
   const [payload, setPayload] = useState('{\n  "example": "value"\n}');
+  const [environment, setEnvironment] = useState("test");
+  const [endpoints, setEndpoints] = useState<EndpointOut[] | null>(null);
+  const [endpointsError, setEndpointsError] = useState<string | null>(null);
+  const [selectedEndpointIds, setSelectedEndpointIds] = useState<Set<string>>(new Set());
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    api
+      .get<EndpointOut[]>("/v1/endpoints")
+      .then(setEndpoints)
+      .catch((err) => setEndpointsError(err instanceof ApiError ? err.message : "Failed to load endpoints"));
+  }, []);
+
+  const endpointsForEnvironment = (endpoints ?? []).filter((ep) => ep.environment === environment);
+
+  function toggleEndpoint(id: string) {
+    setSelectedEndpointIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -131,7 +152,15 @@ function PublishTester({ onPublished }: { onPublished: () => void }) {
         method: "POST",
         skipAuth: true, // the Event Publishing API uses an API key, not the dashboard JWT
         headers: { "X-RelayHub-Api-Key": apiKey },
-        body: { event: eventType, payload: parsedPayload },
+        body: {
+          event: eventType,
+          payload: parsedPayload,
+          environment,
+          // Omit entirely (rather than sending an empty array) when nothing is picked,
+          // so the backend falls back to its normal "deliver to every subscribed
+          // endpoint" behavior instead of interpreting an empty list as "deliver to nobody".
+          ...(selectedEndpointIds.size > 0 ? { endpoint_ids: Array.from(selectedEndpointIds) } : {}),
+        },
       });
       setResult({ ok: true, message: "Event published successfully." });
       onPublished();
@@ -162,19 +191,35 @@ function PublishTester({ onPublished }: { onPublished: () => void }) {
             placeholder="rh_test_..."
             type="password"
           />
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-medium text-graphite-700 dark:text-graphite-200">Event type</label>
-            <select
-              value={eventType}
-              onChange={(e) => setEventType(e.target.value)}
-              className="h-9 rounded border border-graphite-200 bg-white px-2 text-sm dark:border-graphite-700 dark:bg-graphite-900"
-            >
-              {BUILT_IN_EVENT_TYPES.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-medium text-graphite-700 dark:text-graphite-200">Event type</label>
+              <select
+                value={eventType}
+                onChange={(e) => setEventType(e.target.value)}
+                className="h-9 rounded border border-graphite-200 bg-white px-2 text-sm dark:border-graphite-700 dark:bg-graphite-900"
+              >
+                {BUILT_IN_EVENT_TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-medium text-graphite-700 dark:text-graphite-200">Environment</label>
+              <select
+                value={environment}
+                onChange={(e) => {
+                  setEnvironment(e.target.value);
+                  setSelectedEndpointIds(new Set()); // selections from the old environment don't apply anymore
+                }}
+                className="h-9 rounded border border-graphite-200 bg-white px-2 text-sm dark:border-graphite-700 dark:bg-graphite-900"
+              >
+                <option value="test">test</option>
+                <option value="live">live</option>
+              </select>
+            </div>
           </div>
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-medium text-graphite-700 dark:text-graphite-200">Payload (JSON)</label>
@@ -184,6 +229,39 @@ function PublishTester({ onPublished }: { onPublished: () => void }) {
               rows={5}
               className="rounded border border-graphite-200 bg-white p-2.5 font-mono text-xs dark:border-graphite-700 dark:bg-graphite-900"
             />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-graphite-700 dark:text-graphite-200">
+              Deliver to
+              <span className="ml-1.5 font-normal text-graphite-500">
+                {selectedEndpointIds.size === 0
+                  ? "(all endpoints subscribed to this event type -- default)"
+                  : `(only the ${selectedEndpointIds.size} selected below)`}
+              </span>
+            </label>
+            {endpointsError ? (
+              <p className="text-xs text-signal-red">{endpointsError}</p>
+            ) : endpoints === null ? (
+              <p className="text-xs text-graphite-500">Loading endpoints…</p>
+            ) : endpointsForEnvironment.length === 0 ? (
+              <p className="text-xs text-graphite-500">No endpoints in the &quot;{environment}&quot; environment yet.</p>
+            ) : (
+              <div className="flex flex-col gap-1 rounded border border-graphite-200 p-2 dark:border-graphite-700">
+                {endpointsForEnvironment.map((ep) => (
+                  <label key={ep.id} className="flex items-center gap-2 rounded px-1.5 py-1 text-xs hover:bg-graphite-50 dark:hover:bg-graphite-800/60">
+                    <input
+                      type="checkbox"
+                      checked={selectedEndpointIds.has(ep.id)}
+                      onChange={() => toggleEndpoint(ep.id)}
+                      className="h-3.5 w-3.5 accent-signal-amber"
+                    />
+                    <span className="font-medium text-graphite-800 dark:text-graphite-200">{ep.name}</span>
+                    <span className="truncate text-graphite-500">{ep.url}</span>
+                    {!ep.is_active && <span className="ml-auto shrink-0 text-graphite-400">inactive</span>}
+                  </label>
+                ))}
+              </div>
+            )}
           </div>
           {result && <p className={`text-xs ${result.ok ? "text-signal-green" : "text-signal-red"}`}>{result.message}</p>}
           <Button type="submit" size="sm" loading={loading} className="self-end">
