@@ -14,6 +14,17 @@ class PublishEventRequest(BaseModel):
     payload: dict = Field(default_factory=dict)
     idempotency_key: str | None = Field(default=None, max_length=255)
     environment: EndpointEnvironment = EndpointEnvironment.TEST
+    endpoint_ids: list[uuid.UUID] | None = Field(
+        default=None,
+        description=(
+            "Optional. If omitted (default), the event fans out to every active endpoint in this "
+            "environment subscribed to this event type -- the normal webhook behavior. If provided, "
+            "delivery is restricted to exactly these endpoint IDs, bypassing each endpoint's normal "
+            "subscribed_event_types filter (an explicit selection overrides the subscription filter). "
+            "Endpoint IDs that don't belong to this organization, aren't in the given environment, or "
+            "aren't active are silently skipped rather than erroring."
+        ),
+    )
 
     @field_validator("event")
     @classmethod
