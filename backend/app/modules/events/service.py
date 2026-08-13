@@ -34,15 +34,29 @@ async def _ensure_event_type_registered(db: AsyncSession, *, organization_id: uu
     await db.flush()
 
 
-async def _matching_endpoints(db: AsyncSession, *, organization_id: uuid.UUID, event_type: str, environment: str) -> list[Endpoint]:
-    result = await db.execute(
-        select(Endpoint).where(
-            Endpoint.organization_id == organization_id,
-            Endpoint.environment == environment,
-            Endpoint.is_active.is_(True),
-            Endpoint.deleted_at.is_(None),
-        )
+async def _matching_endpoints(
+    db: AsyncSession,
+    *,
+    organization_id: uuid.UUID,
+    event_type: str,
+    environment: str,
+    endpoint_ids: list[uuid.UUID] | None = None,
+) -> list[Endpoint]:
+    query = select(Endpoint).where(
+        Endpoint.organization_id == organization_id,
+        Endpoint.environment == environment,
+        Endpoint.is_active.is_(True),
+        Endpoint.deleted_at.is_(None),
     )
+    if endpoint_ids is not None:
+        # Caller explicitly picked endpoints -- deliver to exactly those (that still
+        # belong to this org/environment/are active), bypassing the subscribed_event_types
+        # filter below. An explicit selection is a stronger signal than a standing subscription.
+        query = query.where(Endpoint.id.in_(endpoint_ids))
+        result = await db.execute(query)
+        return list(result.scalars().all())
+
+    result = await db.execute(query)
     endpoints = result.scalars().all()
     # Empty subscribed_event_types means "subscribe to everything" -- a common and
     # expected default for a customer's first endpoint, matching Stripe/GitHub-style
@@ -105,7 +119,11 @@ async def publish_event(
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Duplicate idempotency key") from e
 
     matching = await _matching_endpoints(
-        db, organization_id=organization_id, event_type=data.event, environment=data.environment.value
+        db,
+        organization_id=organization_id,
+        event_type=data.event,
+        environment=data.environment.value,
+        endpoint_ids=data.endpoint_ids,
     )
 
     now = datetime.now(timezone.utc)
