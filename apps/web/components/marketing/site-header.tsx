@@ -15,6 +15,7 @@ const LINKS = [
   { href: "/docs", label: "Docs" },
   { href: "/changelog", label: "Changelog" },
   { href: "/blog", label: "Blog" },
+  { href: "/founder", label: "Founder" },
 ];
 
 export function SiteHeader() {
