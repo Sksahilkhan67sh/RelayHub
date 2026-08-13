@@ -8,6 +8,7 @@ import type { EndpointOut, EndpointSecretOut, DeliveryLogEntryOut } from "@/lib/
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardBody, Badge } from "@/components/ui/card";
 import { Modal } from "@/components/ui/modal";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { StatusDot, statusToSignalColor } from "@/components/ui/status-dot";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -18,7 +19,8 @@ export default function EndpointDetailPage() {
   const [deliveries, setDeliveries] = useState<DeliveryLogEntryOut[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [rotatedSecret, setRotatedSecret] = useState<EndpointSecretOut | null>(null);
-  const [deleting, setDeleting] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   async function load() {
     try {
@@ -63,20 +65,12 @@ export default function EndpointDetailPage() {
 
   async function handleDelete() {
     if (!endpoint) return;
-    if (
-      !confirm(
-        `Delete "${endpoint.name}"? Events will stop being delivered here immediately. Its past delivery history is kept for your records, but this endpoint itself can't be recovered.`
-      )
-    ) {
-      return;
-    }
-    setDeleting(true);
+    setDeleteError(null);
     try {
       await api.delete(`/v1/endpoints/${endpoint.id}`);
       router.push("/endpoints");
     } catch (err) {
-      alert(err instanceof ApiError ? err.message : "Failed to delete endpoint");
-      setDeleting(false);
+      setDeleteError(err instanceof ApiError ? err.message : "Failed to delete endpoint");
     }
   }
 
@@ -137,7 +131,7 @@ export default function EndpointDetailPage() {
             {endpoint.is_active ? <Ban className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
             {endpoint.is_active ? "Disable" : "Enable"}
           </Button>
-          <Button variant="danger" size="sm" onClick={handleDelete} loading={deleting}>
+          <Button variant="danger" size="sm" onClick={() => setDeleteDialogOpen(true)}>
             <Trash2 className="h-3.5 w-3.5" />
             Delete
           </Button>
@@ -214,6 +208,19 @@ export default function EndpointDetailPage() {
       </Card>
 
       <RotatedSecretModal secret={rotatedSecret} onClose={() => setRotatedSecret(null)} />
+
+      <ConfirmDialog
+        open={deleteDialogOpen}
+        onClose={() => { setDeleteDialogOpen(false); setDeleteError(null); }}
+        onConfirm={handleDelete}
+        title="Delete endpoint"
+        description={
+          `Delete "${endpoint.name}"? Events will stop being delivered here immediately. Its past delivery history is kept for your records, but this endpoint itself can't be recovered.` +
+          (deleteError ? ` — ${deleteError}` : "")
+        }
+        confirmLabel="Delete"
+        danger
+      />
     </div>
   );
 }
