@@ -68,6 +68,7 @@ export default function DashboardPage() {
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <KpiCard label="Deliveries today" value={summary?.total_deliveries ?? 0} />
+        <KpiCard label="Successful deliveries" value={summary?.success_count ?? 0} tone="green" />
         <KpiCard
           label="Success rate"
           value={summary?.success_rate != null ? `${(summary.success_rate * 100).toFixed(1)}%` : "—"}
