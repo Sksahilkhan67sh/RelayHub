@@ -1,4 +1,4 @@
-import { RelayHubClient } from "@relayhub/sdk";
+import { RelayHubClient } from "relayhub-sdk";
 import { hostname } from "node:os";
 import { ParsedArgs, flagString } from "../args.js";
 import { saveConfig, loadConfig, resolveBaseUrl } from "../config.js";
