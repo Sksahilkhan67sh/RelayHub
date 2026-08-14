@@ -1,4 +1,4 @@
-# @relayhub/sdk
+# relayhub-sdk
 
 Official Node.js / TypeScript SDK for the [RelayHub](https://relayhub.dev) webhook
 and event delivery API. Thin, typed wrapper over `/v1/*` -- every method maps 1:1
@@ -8,7 +8,7 @@ business logic of its own.
 ## Install
 
 ```bash
-npm install @relayhub/sdk
+npm install relayhub-sdk
 ```
 
 Requires Node 18+ (uses the global `fetch`).
@@ -16,7 +16,7 @@ Requires Node 18+ (uses the global `fetch`).
 ## Quick start
 
 ```ts
-import { RelayHubClient } from "@relayhub/sdk";
+import { RelayHubClient } from "relayhub-sdk";
 
 const client = new RelayHubClient({ apiKey: process.env.RELAYHUB_API_KEY! });
 
@@ -76,7 +76,7 @@ List endpoints return a plain array with `limit`/`offset` query params, not a
 cursor envelope. Use `paginate`/`collectAll` to walk a full result set:
 
 ```ts
-import { paginate } from "@relayhub/sdk";
+import { paginate } from "relayhub-sdk";
 
 for await (const job of paginate((page) => client.dlq.list({ ...page }))) {
   console.log(job.id, job.last_error_message);
@@ -88,7 +88,7 @@ for await (const job of paginate((page) => client.dlq.list({ ...page }))) {
 Every non-2xx response raises a typed subclass of `RelayHubError`:
 
 ```ts
-import { RelayHubNotFoundError, RelayHubRateLimitError } from "@relayhub/sdk";
+import { RelayHubNotFoundError, RelayHubRateLimitError } from "relayhub-sdk";
 
 try {
   await client.endpoints.get(id);
