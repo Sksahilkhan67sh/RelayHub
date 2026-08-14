@@ -1,5 +1,5 @@
 {
-  "name": "@relayhub/sdk",
+  "name": "relayhub-sdk",
   "version": "1.0.0",
   "description": "Official Node.js / TypeScript SDK for the RelayHub webhook and event delivery API.",
   "license": "MIT",
