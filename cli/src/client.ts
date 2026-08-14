@@ -1,4 +1,4 @@
-import { RelayHubClient, RelayHubError } from "@relayhub/sdk";
+import { RelayHubClient, RelayHubError } from "relayhub-sdk";
 import { resolveApiKey, resolveBaseUrl } from "./config.js";
 import { color, error } from "./output.js";
 
