@@ -12,7 +12,7 @@ Maven:
 
 ```xml
 <dependency>
-  <groupId>dev.relayhub</groupId>
+  <groupId>io.github.Sksahilkhan67sh</groupId>
   <artifactId>relayhub-sdk</artifactId>
   <version>1.0.0</version>
 </dependency>
