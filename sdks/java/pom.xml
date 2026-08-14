@@ -125,7 +125,7 @@
               <goal>sign</goal>
             </goals>
             <configuration>
-              <keyname>REPLACE_WITH_YOUR_GPG_KEY_ID</keyname>
+              <keyname>15D9A114191C0947</keyname>
             </configuration>
           </execution>
         </executions>
