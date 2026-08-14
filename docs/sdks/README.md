@@ -20,7 +20,7 @@ Phase D.
 | Node.js | `npm install relayhub-sdk` |
 | Python | `pip install relayhub` |
 | Go | `go get github.com/relayhub/relayhub-go` |
-| Java | Maven dependency `dev.relayhub:relayhub-sdk:1.0.0` |
+| Java | Maven dependency `io.github.Sksahilkhan67sh:relayhub-sdk:1.0.0` |
 
 ## Authentication / client creation
 
