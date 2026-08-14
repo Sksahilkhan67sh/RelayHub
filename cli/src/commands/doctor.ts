@@ -1,6 +1,6 @@
 import { ParsedArgs, flagString } from "../args.js";
 import { resolveApiKey, resolveBaseUrl, CONFIG_FILE_PATH } from "../config.js";
-import { RelayHubClient, RelayHubError } from "@relayhub/sdk";
+import { RelayHubClient, RelayHubError } from "relayhub-sdk";
 import { success, error, warn, color } from "../output.js";
 import { existsSync } from "node:fs";
 
