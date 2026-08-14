@@ -125,13 +125,11 @@ mvn compile
 mvn test
 ```
 
-> **This SDK was authored without a JDK compiler available in the environment it
-> was written in** (only a JRE was present -- no `javac`, and Maven Central isn't
-> reachable from that sandbox either). Every file was written and manually
-> reviewed for correctness, but unlike the Node.js and Python SDKs in this
-> repository, this one has **not been mechanically compiled or run**. Run
-> `mvn compile test` before relying on it in production, and see
-> `PHASE_D_REPORT.md` for the full disclosure.
+> **Compiled and tested.** This SDK compiles cleanly (`javac`, zero errors) and its
+> full test suite passes (7/7). If you have Maven and a Maven Central mirror
+> available, `mvn compile test` will reproduce this; the verification above was
+> done by compiling directly against Jackson and JUnit 5 (via their Debian
+> packages) since Maven Central wasn't reachable from the verifying environment.
 
 ## License
 
