@@ -1,7 +1,7 @@
 import { ParsedArgs, flagString, flagNumber } from "../args.js";
 import { getClient, run } from "../client.js";
 import { printTable, printJson, error } from "../output.js";
-import type { DeliveryStatus } from "@relayhub/sdk";
+import type { DeliveryStatus } from "relayhub-sdk";
 
 export async function deliveriesCommand(args: ParsedArgs): Promise<void> {
   await run(async () => {
