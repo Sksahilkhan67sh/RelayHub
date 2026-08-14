@@ -63,11 +63,11 @@ export default function FounderPage() {
             </h1>
             <p className="mt-4 max-w-2xl text-[15px] leading-relaxed text-graphite-600 dark:text-graphite-400">
               A builder at heart, a founder by ambition.
-              I’m Sahil Khan — a software developer, entrepreneur, and product builder focused on turning ideas into real-world digital products. I enjoy working at the intersection of **technology, product, and innovation**, building solutions that are designed not just to work, but to create meaningful impact.
-              As the founder of **AlignCraft**, I’m working toward building scalable technology products that solve practical problems and deliver exceptional user experiences.
+              I’m Sahil Khan — a software developer, entrepreneur, and product builder focused on turning ideas into real-world digital products. I enjoy working at the intersection of <span className="font-medium text-graphite-800 dark:text-graphite-200">technology, product, and innovation</span>, building solutions that are designed not just to work, but to create meaningful impact.
+              As the founder of <span className="font-medium text-graphite-800 dark:text-graphite-200">AlignCraft</span>, I’m working toward building scalable technology products that solve practical problems and deliver exceptional user experiences.
               I believe in learning by building, thinking beyond conventional solutions, and continuously improving. From writing code to designing systems, from solving complex problems to turning an idea into a product — I’m driven by the process of **building something that matters**.
               
-              **Think. Build. Learn. Scale. Repeat.**
+              <span className="font-medium text-graphite-800 dark:text-graphite-200">Think. Build. Learn. Scale. Repeat.</span>
 
             </p>
             <p className="mt-4 max-w-2xl text-[15px] leading-relaxed text-graphite-600 dark:text-graphite-400">
