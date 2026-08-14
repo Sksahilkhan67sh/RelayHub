@@ -4,7 +4,15 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
-  <groupId>dev.relayhub</groupId>
+  <!-- groupId uses the io.github.<username> namespace, which Maven Central grants
+       automatically tied to GitHub identity, with no domain ownership required.
+       This intentionally differs from the SDK's actual Java package (dev.relayhub.sdk,
+       unchanged below and in every source file): groupId is purely the Maven
+       Central publishing coordinate, the package name is what code actually
+       imports, and Central only requires the former to match a verified
+       namespace. If dev.relayhub is registered as an owned domain later, this
+       can be migrated to dev.relayhub with a version bump. -->
+  <groupId>io.github.Sksahilkhan67sh</groupId>
   <artifactId>relayhub-sdk</artifactId>
   <version>1.0.0</version>
   <packaging>jar</packaging>
