@@ -65,11 +65,12 @@ export default function FounderPage() {
               A builder at heart, a founder by ambition.
               I’m Sahil Khan — a software developer, entrepreneur, and product builder focused on turning ideas into real-world digital products. I enjoy working at the intersection of <span className="font-medium text-graphite-800 dark:text-graphite-200">technology, product, and innovation</span>, building solutions that are designed not just to work, but to create meaningful impact.
               As the founder of <span className="font-medium text-graphite-800 dark:text-graphite-200">AlignCraft</span>, I’m working toward building scalable technology products that solve practical problems and deliver exceptional user experiences.
-              I believe in learning by building, thinking beyond conventional solutions, and continuously improving. From writing code to designing systems, from solving complex problems to turning an idea into a product — I’m driven by the process of **building something that matters**.
-              
-              <span className="font-medium text-graphite-800 dark:text-graphite-200">Think. Build. Learn. Scale. Repeat.</span>
+              I believe in learning by building, thinking beyond conventional solutions, and continuously improving. From writing code to designing systems, from solving complex problems to turning an idea into a product — I’m driven by the process of <span className="font-medium text-graphite-800 dark:text-graphite-200">building something that matters.</span>.
+              </p>
 
-            </p>
+            <span className="font-medium text-graphite-800 dark:text-graphite-200">Think. Build. Learn. Scale. Repeat.</span>
+
+            
             <p className="mt-4 max-w-2xl text-[15px] leading-relaxed text-graphite-600 dark:text-graphite-400">
               I&apos;m also the founder of <span className="font-medium text-graphite-800 dark:text-graphite-200">AlignCraft</span>,
               where I focus on building innovative technology products and SaaS solutions &mdash; RelayHub is one of
