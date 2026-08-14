@@ -73,10 +73,7 @@
         <version>3.2.5</version>
       </plugin>
       <!-- Maven Central requires a -sources.jar and -javadoc.jar alongside the
-           main jar for every published artifact; these two plugins produce them.
-           GPG signing (also required by Central) isn't configured here since it
-           needs your personal key ID, which can't be set generically; add
-           maven-gpg-plugin bound to the 'sign' goal once you've generated a key. -->
+           main jar for every published artifact; these two plugins produce them. -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-source-plugin</artifactId>
@@ -102,6 +99,45 @@
             </goals>
           </execution>
         </executions>
+      </plugin>
+      <!-- Signs every artifact (jar, sources jar, javadoc jar) with your GPG key,
+           required by Maven Central. keyname is a placeholder: replace with your
+           real key ID (run `gpg -K` and use the ID after "sec rsaXXXX/"),
+           and never commit gpg.passphrase in plaintext; pass it as a CLI flag
+           at build time or via your gitignored ~/.m2/settings.xml, not this file. -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-gpg-plugin</artifactId>
+        <version>3.2.1</version>
+        <executions>
+          <execution>
+            <id>sign-artifacts</id>
+            <phase>verify</phase>
+            <goals>
+              <goal>sign</goal>
+            </goals>
+            <configuration>
+              <keyname>REPLACE_WITH_YOUR_GPG_KEY_ID</keyname>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+      <!-- Uploads the signed bundle to Sonatype's Central Portal (the only
+           working publish path since OSSRH was fully retired in June 2025).
+           serverId must match a <server> block with your Central Portal user
+           token in ~/.m2/settings.xml; see the README for the exact steps.
+           autoPublish is deliberately false: after upload, review the
+           deployment on central.sonatype.com and click Publish yourself the
+           first time, rather than auto-publishing something unreviewed. -->
+      <plugin>
+        <groupId>org.sonatype.central</groupId>
+        <artifactId>central-publishing-maven-plugin</artifactId>
+        <version>0.6.0</version>
+        <extensions>true</extensions>
+        <configuration>
+          <publishingServerId>central</publishingServerId>
+          <autoPublish>false</autoPublish>
+        </configuration>
       </plugin>
     </plugins>
   </build>
