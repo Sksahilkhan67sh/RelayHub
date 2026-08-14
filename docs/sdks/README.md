@@ -17,7 +17,7 @@ Phase D.
 
 | SDK | Command |
 |---|---|
-| Node.js | `npm install @relayhub/sdk` |
+| Node.js | `npm install relayhub-sdk` |
 | Python | `pip install relayhub` |
 | Go | `go get github.com/relayhub/relayhub-go` |
 | Java | Maven dependency `dev.relayhub:relayhub-sdk:1.0.0` |
