@@ -1,7 +1,7 @@
 # relay -- the official RelayHub CLI
 
 Command-line interface for [RelayHub](https://relayhub.dev), built on top of
-[`@relayhub/sdk`](../sdks/node) -- the CLI has no HTTP logic of its own; every
+[`relayhub-sdk`](../sdks/node) -- the CLI has no HTTP logic of its own; every
 command is a thin wrapper that formats the SDK's typed responses for a terminal.
 
 ## Install
