@@ -25,7 +25,7 @@ async def list_dead_letter_jobs(
 ) -> list[DeliveryJob]:
     query = (
         select(DeliveryJob)
-        .options(selectinload(DeliveryJob.attempts), selectinload(DeliveryJob.event))
+        .options(selectinload(DeliveryJob.attempts), selectinload(DeliveryJob.event), selectinload(DeliveryJob.endpoint))
         .where(
             DeliveryJob.organization_id == organization_id,
             DeliveryJob.status == DeliveryJobStatus.DEAD_LETTER.value,
@@ -45,7 +45,7 @@ async def _get_dlq_job_or_404(db: AsyncSession, *, organization_id: uuid.UUID, j
     job = (
         await db.execute(
             select(DeliveryJob)
-            .options(selectinload(DeliveryJob.attempts), selectinload(DeliveryJob.event))
+            .options(selectinload(DeliveryJob.attempts), selectinload(DeliveryJob.event), selectinload(DeliveryJob.endpoint))
             .where(
                 DeliveryJob.id == job_id,
                 DeliveryJob.organization_id == organization_id,
