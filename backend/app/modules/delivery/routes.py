@@ -9,11 +9,15 @@ from app.modules.auth.models import Role
 from app.modules.delivery import query_service
 from app.modules.delivery.models import DeliveryJob
 from app.modules.delivery.schemas import DeliveryJobOut
+from app.modules.retry.schedule import DEFAULT_MAX_ATTEMPTS
 
 router = APIRouter(prefix="/deliveries", tags=["deliveries"])
 
 
 def _to_out(job: DeliveryJob) -> DeliveryJobOut:
+    effective_max_attempts = (
+        job.endpoint.max_retry_attempts if job.endpoint and job.endpoint.max_retry_attempts is not None else DEFAULT_MAX_ATTEMPTS
+    )
     return DeliveryJobOut(
         id=job.id,
         event_id=job.event_id,
@@ -22,6 +26,7 @@ def _to_out(job: DeliveryJob) -> DeliveryJobOut:
         payload=job.event.payload if job.event else {},
         status=job.status,
         attempt_number=job.attempt_number,
+        max_attempts=effective_max_attempts,
         queued_at=job.queued_at,
         next_attempt_at=job.next_attempt_at,
         completed_at=job.completed_at,
