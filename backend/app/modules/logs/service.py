@@ -45,7 +45,7 @@ async def search_delivery_logs(
     query = (
         select(DeliveryJob)
         .join(Event, DeliveryJob.event_id == Event.id)
-        .options(selectinload(DeliveryJob.attempts), selectinload(DeliveryJob.event))
+        .options(selectinload(DeliveryJob.attempts), selectinload(DeliveryJob.event), selectinload(DeliveryJob.endpoint))
         .where(DeliveryJob.organization_id == organization_id, DeliveryJob.deleted_at.is_(None))
     )
 
