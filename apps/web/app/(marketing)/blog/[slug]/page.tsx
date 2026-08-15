@@ -3,14 +3,25 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { Badge } from "@/components/ui/card";
-import { BLOG_POSTS, getPostBySlug } from "@/lib/blog-data";
+import type { BlogPostOut } from "@/lib/types";
 
-export function generateStaticParams() {
-  return BLOG_POSTS.map((p) => ({ slug: p.slug }));
+// Fetched per-request rather than statically generated at build time: posts are
+// now created/edited/published by admins through the API at any time, so the set
+// of valid slugs isn't knowable at build time the way the old static blog-data.ts
+// array was.
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+async function getPostBySlug(slug: string): Promise<BlogPostOut | null> {
+  const res = await fetch(`${API_BASE_URL}/v1/content/blog-posts/${encodeURIComponent(slug)}`, {
+    cache: "no-store",
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Failed to load post: ${res.status}`);
+  return res.json();
 }
 
-export function generateMetadata({ params }: { params: { slug: string } }): Metadata {
-  const post = getPostBySlug(params.slug);
+export async function generateMetadata({ params }: { params: { slug: string } }): Promise<Metadata> {
+  const post = await getPostBySlug(params.slug).catch(() => null);
   if (!post) return {};
   return {
     title: `${post.title} — RelayHub Blog`,
@@ -20,8 +31,8 @@ export function generateMetadata({ params }: { params: { slug: string } }): Meta
   };
 }
 
-export default function BlogPostPage({ params }: { params: { slug: string } }) {
-  const post = getPostBySlug(params.slug);
+export default async function BlogPostPage({ params }: { params: { slug: string } }) {
+  const post = await getPostBySlug(params.slug);
   if (!post) notFound();
 
   return (
@@ -36,14 +47,14 @@ export default function BlogPostPage({ params }: { params: { slug: string } }) {
         <h1 className="mt-4 text-3xl font-semibold leading-tight tracking-tight text-graphite-950 sm:text-4xl dark:text-graphite-50">{post.title}</h1>
         <div className="mt-5 flex items-center gap-3">
           <span className="flex h-8 w-8 items-center justify-center rounded-full bg-signal-amber text-xs font-semibold text-white">
-            {post.author.name[0]}
+            {post.author_name[0]}
           </span>
           <div>
             <p className="text-xs font-medium text-graphite-800 dark:text-graphite-200">
-              {post.author.name} <span className="font-normal text-graphite-400">· {post.author.role}</span>
+              {post.author_name} <span className="font-normal text-graphite-400">· {post.author_role}</span>
             </p>
             <p className="text-[11px] text-graphite-500">
-              {post.date} · {post.readMinutes} min read
+              {post.published_at ?? new Date(post.created_at).toLocaleDateString()} · {post.read_minutes} min read
             </p>
           </div>
         </div>
