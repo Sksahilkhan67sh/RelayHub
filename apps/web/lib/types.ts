@@ -388,3 +388,32 @@ export interface AdminLogEntry {
   queued_at: string;
   completed_at: string | null;
 }
+
+export type ContentStatus = "draft" | "published";
+
+export interface BlogPostOut {
+  id: string;
+  slug: string;
+  title: string;
+  excerpt: string;
+  category: string;
+  author_name: string;
+  author_role: string;
+  read_minutes: number;
+  body: string[];
+  status: ContentStatus;
+  published_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface JobPostingOut {
+  id: string;
+  title: string;
+  team: string;
+  location: string;
+  description: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
