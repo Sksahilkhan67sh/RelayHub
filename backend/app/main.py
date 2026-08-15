@@ -13,11 +13,12 @@ from app.modules.alerts.routes import router as alerts_router
 from app.modules.analytics.routes import router as analytics_router
 from app.modules.api_keys.routes import router as api_keys_router
 from app.modules.audit.routes import router as audit_router
-from app.modules.content.routes import admin_router as content_admin_router, public_router as content_public_router
 from app.modules.auth.invitation_routes import router as invitations_router
 from app.modules.auth.org_routes import router as org_router
 from app.modules.auth.routes import router as auth_router
 from app.modules.billing.routes import router as billing_router
+from app.modules.content.routes import admin_router as content_admin_router
+from app.modules.content.routes import public_router as content_public_router
 from app.modules.delivery.routes import router as deliveries_router
 from app.modules.dlq.routes import router as dlq_router
 from app.modules.endpoints.routes import router as endpoints_router
