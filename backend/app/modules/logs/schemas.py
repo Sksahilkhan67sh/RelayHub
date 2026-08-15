@@ -15,6 +15,10 @@ class DeliveryLogEntryOut(BaseModel):
     request_id: str
     status: str
     attempt_number: int
+    # See DeliveryJobOut.max_attempts (delivery/schemas.py) -- same field, same
+    # source of truth, kept consistent across every place a job's attempt state
+    # is surfaced (Delivery Detail, Deliveries list, Logs search).
+    max_attempts: int
     queued_at: datetime
     next_attempt_at: datetime | None
     completed_at: datetime | None
