@@ -1,7 +1,8 @@
 import type { MetadataRoute } from "next";
-import { BLOG_POSTS } from "@/lib/blog-data";
+import type { BlogPostOut } from "@/lib/types";
 
 const BASE_URL = "https://relayhub.dev";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 const STATIC_ROUTES = [
   "",
@@ -22,7 +23,18 @@ const STATIC_ROUTES = [
   "/register",
 ];
 
-export default function sitemap(): MetadataRoute.Sitemap {
+async function getPublishedBlogSlugs(): Promise<string[]> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/v1/content/blog-posts`, { next: { revalidate: 3600 } });
+    if (!res.ok) return [];
+    const posts: BlogPostOut[] = await res.json();
+    return posts.map((p) => p.slug);
+  } catch {
+    return []; // sitemap generation shouldn't fail the whole build/request if the API is briefly unreachable
+  }
+}
+
+export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const staticEntries = STATIC_ROUTES.map((route) => {
     const changeFrequency: "weekly" | "monthly" = route === "" ? "weekly" : "monthly";
     return {
@@ -33,8 +45,9 @@ export default function sitemap(): MetadataRoute.Sitemap {
     };
   });
 
-  const blogEntries = BLOG_POSTS.map((post) => ({
-    url: `${BASE_URL}/blog/${post.slug}`,
+  const slugs = await getPublishedBlogSlugs();
+  const blogEntries = slugs.map((slug) => ({
+    url: `${BASE_URL}/blog/${slug}`,
     lastModified: new Date(),
     changeFrequency: "monthly" as const,
     priority: 0.5,
