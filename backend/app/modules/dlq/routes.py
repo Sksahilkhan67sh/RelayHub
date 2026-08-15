@@ -9,12 +9,16 @@ from app.modules.auth.dependencies import AuthContext, require_role
 from app.modules.auth.models import Role
 from app.modules.dlq import service
 from app.modules.dlq.schemas import BulkRetryRequest, BulkRetryResponse, DeadLetterJobOut, RetryDeadLetterResponse
+from app.modules.retry.schedule import DEFAULT_MAX_ATTEMPTS
 
 router = APIRouter(prefix="/dlq", tags=["dead-letter-queue"])
 
 
 def _to_out(job) -> DeadLetterJobOut:
     latest = job.attempts[-1] if job.attempts else None
+    effective_max_attempts = (
+        job.endpoint.max_retry_attempts if job.endpoint and job.endpoint.max_retry_attempts is not None else DEFAULT_MAX_ATTEMPTS
+    )
     return DeadLetterJobOut(
         id=job.id,
         event_id=job.event_id,
@@ -22,6 +26,7 @@ def _to_out(job) -> DeadLetterJobOut:
         event_type=job.event.event_type if job.event else "",
         payload=job.event.payload if job.event else {},
         attempt_number=job.attempt_number,
+        max_attempts=effective_max_attempts,
         queued_at=job.queued_at,
         completed_at=job.completed_at,
         last_error_category=latest.error_category if latest else None,
