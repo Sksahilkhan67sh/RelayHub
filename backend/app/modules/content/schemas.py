@@ -21,7 +21,11 @@ class CreateBlogPostRequest(BaseModel):
     read_minutes: int = Field(default=5, ge=1, le=120)
     body: list[str] = Field(default_factory=list, description="One paragraph per array element.")
     status: ContentStatus = ContentStatus.DRAFT
-    published_at: str | None = Field(default=None, max_length=40, description='Editorial display date, e.g. "August 14, 2026". Independent of created_at/updated_at.')
+    published_at: str | None = Field(
+        default=None,
+        max_length=40,
+        description='Editorial display date, e.g. "August 14, 2026". Independent of created_at/updated_at.',
+    )
 
     @field_validator("slug")
     @classmethod
