@@ -119,6 +119,7 @@ async def execute_delivery_job(
         if success:
             job.status = DeliveryJobStatus.SUCCESS.value
             job.completed_at = completed_at
+            job.next_attempt_at = None
         elif error_category in (
             ErrorCategory.PERMANENT_HTTP_ERROR.value,
             ErrorCategory.SSRF_BLOCKED.value,
@@ -126,6 +127,7 @@ async def execute_delivery_job(
         ):
             job.status = DeliveryJobStatus.FAILED.value
             job.completed_at = completed_at
+            job.next_attempt_at = None
         else:
             delay = compute_next_retry_delay(
                 attempt_number=job.attempt_number, max_attempts=endpoint.max_retry_attempts
