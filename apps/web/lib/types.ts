@@ -140,6 +140,7 @@ export interface DeliveryJobOut {
   payload: Record<string, unknown>;
   status: string;
   attempt_number: number;
+  max_attempts: number;
   queued_at: string;
   next_attempt_at: string | null;
   completed_at: string | null;
@@ -155,6 +156,7 @@ export interface DeliveryLogEntryOut {
   request_id: string;
   status: string;
   attempt_number: number;
+  max_attempts: number;
   queued_at: string;
   next_attempt_at: string | null;
   completed_at: string | null;
@@ -178,6 +180,7 @@ export interface DeadLetterJobOut {
   event_type: string;
   payload: Record<string, unknown>;
   attempt_number: number;
+  max_attempts: number;
   queued_at: string;
   completed_at: string | null;
   last_error_category: string | null;
