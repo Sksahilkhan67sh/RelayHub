@@ -9,11 +9,15 @@ from app.modules.auth.dependencies import AuthContext, require_role
 from app.modules.auth.models import Role
 from app.modules.logs import service
 from app.modules.logs.schemas import DeliveryLogEntryOut
+from app.modules.retry.schedule import DEFAULT_MAX_ATTEMPTS
 
 router = APIRouter(prefix="/logs", tags=["delivery-logs"])
 
 
 def _to_out(job) -> DeliveryLogEntryOut:
+    effective_max_attempts = (
+        job.endpoint.max_retry_attempts if job.endpoint and job.endpoint.max_retry_attempts is not None else DEFAULT_MAX_ATTEMPTS
+    )
     return DeliveryLogEntryOut(
         id=job.id,
         event_id=job.event_id,
@@ -23,6 +27,7 @@ def _to_out(job) -> DeliveryLogEntryOut:
         request_id=job.event.request_id if job.event else "",
         status=job.status,
         attempt_number=job.attempt_number,
+        max_attempts=effective_max_attempts,
         queued_at=job.queued_at,
         next_attempt_at=job.next_attempt_at,
         completed_at=job.completed_at,
