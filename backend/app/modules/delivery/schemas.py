@@ -29,6 +29,12 @@ class DeliveryJobOut(BaseModel):
     payload: dict
     status: str
     attempt_number: int
+    # The effective retry ceiling for THIS job specifically: the endpoint's
+    # max_retry_attempts override if one is set, otherwise the platform default
+    # (app.modules.retry.schedule.DEFAULT_MAX_ATTEMPTS). Exposed here rather than
+    # left for the frontend to guess/hardcode, since it can differ per endpoint and
+    # the platform default itself can change over time -- see _to_out() in routes.py.
+    max_attempts: int
     queued_at: datetime
     next_attempt_at: datetime | None
     completed_at: datetime | None
