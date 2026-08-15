@@ -13,6 +13,7 @@ from app.modules.alerts.routes import router as alerts_router
 from app.modules.analytics.routes import router as analytics_router
 from app.modules.api_keys.routes import router as api_keys_router
 from app.modules.audit.routes import router as audit_router
+from app.modules.content.routes import admin_router as content_admin_router, public_router as content_public_router
 from app.modules.auth.invitation_routes import router as invitations_router
 from app.modules.auth.org_routes import router as org_router
 from app.modules.auth.routes import router as auth_router
@@ -63,6 +64,8 @@ app.include_router(analytics_router, prefix=settings.API_V1_PREFIX)
 app.include_router(alerts_router, prefix=settings.API_V1_PREFIX)
 app.include_router(billing_router, prefix=settings.API_V1_PREFIX)
 app.include_router(admin_router, prefix=settings.API_V1_PREFIX)
+app.include_router(content_admin_router, prefix=settings.API_V1_PREFIX)
+app.include_router(content_public_router, prefix=settings.API_V1_PREFIX)
 
 
 @app.get("/health/live", tags=["health"])
