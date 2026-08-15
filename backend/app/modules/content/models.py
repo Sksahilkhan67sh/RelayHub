@@ -9,7 +9,6 @@ reports in app/modules/admin.
 
 from __future__ import annotations
 
-import uuid
 from enum import Enum
 
 from sqlalchemy import Boolean, Integer, String, Text
