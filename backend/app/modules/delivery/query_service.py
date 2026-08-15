@@ -14,7 +14,7 @@ async def get_delivery_job(db: AsyncSession, *, organization_id: uuid.UUID, job_
     job = (
         await db.execute(
             select(DeliveryJob)
-            .options(selectinload(DeliveryJob.attempts), selectinload(DeliveryJob.event))
+            .options(selectinload(DeliveryJob.attempts), selectinload(DeliveryJob.event), selectinload(DeliveryJob.endpoint))
             .where(DeliveryJob.id == job_id, DeliveryJob.organization_id == organization_id, DeliveryJob.deleted_at.is_(None))
         )
     ).scalar_one_or_none()
@@ -26,7 +26,7 @@ async def get_delivery_job(db: AsyncSession, *, organization_id: uuid.UUID, job_
 async def list_delivery_jobs_for_event(db: AsyncSession, *, organization_id: uuid.UUID, event_id: uuid.UUID) -> list[DeliveryJob]:
     result = await db.execute(
         select(DeliveryJob)
-        .options(selectinload(DeliveryJob.attempts), selectinload(DeliveryJob.event))
+        .options(selectinload(DeliveryJob.attempts), selectinload(DeliveryJob.event), selectinload(DeliveryJob.endpoint))
         .where(
             DeliveryJob.organization_id == organization_id,
             DeliveryJob.event_id == event_id,
