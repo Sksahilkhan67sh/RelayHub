@@ -12,6 +12,7 @@ from app.db.base import Base, SoftDeleteMixin, TimestampMixin, UUIDPKMixin
 if TYPE_CHECKING:
     # See the matching TYPE_CHECKING import in events/models.py -- same circular-import
     # avoidance, mirrored here so mypy can resolve the "Event" string forward-ref below.
+    from app.modules.endpoints.models import Endpoint  # noqa: F401
     from app.modules.events.models import Event  # noqa: F401
 
 
@@ -63,6 +64,11 @@ class DeliveryJob(Base, UUIDPKMixin, TimestampMixin, SoftDeleteMixin):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     event: Mapped["Event"] = relationship(back_populates="delivery_jobs")  # noqa: F821
+    # One-directional (no back_populates -- Endpoint doesn't need a `delivery_jobs`
+    # collection for anything today) relationship added specifically so the API layer
+    # can read endpoint.max_retry_attempts to compute each job's effective max_attempts,
+    # without a second query per job. Purely additive: no new column, no migration.
+    endpoint: Mapped["Endpoint"] = relationship(viewonly=True)  # noqa: F821
     attempts: Mapped[list["DeliveryAttempt"]] = relationship(back_populates="job", order_by="DeliveryAttempt.attempt_number")
 
 
