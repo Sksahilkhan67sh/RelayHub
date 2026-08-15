@@ -23,6 +23,8 @@ import {
   Flag,
   AlertTriangle,
   FileSearch,
+  Newspaper,
+  Briefcase,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { RelayHubMark } from "@/components/ui/logo";
@@ -55,6 +57,8 @@ export const ADMIN_ITEMS = [
   { href: "/admin/feature-flags", label: "Feature Flags", icon: Flag },
   { href: "/admin/abuse-reports", label: "Abuse Reports", icon: AlertTriangle },
   { href: "/admin/logs", label: "Global Logs", icon: FileSearch },
+  { href: "/admin/blog", label: "Blog", icon: Newspaper },
+  { href: "/admin/careers", label: "Careers", icon: Briefcase },
 ] as const;
 
 export function Sidebar() {
