@@ -4,6 +4,7 @@ import { ArrowRight, MapPin } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/card";
 import { Section, SectionHeading, Eyebrow } from "@/components/marketing/section";
+import type { JobPostingOut } from "@/lib/types";
 
 export const metadata: Metadata = {
   title: "Careers — RelayHub",
@@ -12,12 +13,21 @@ export const metadata: Metadata = {
   openGraph: { title: "Careers — RelayHub", description: "Join the team building webhook delivery infrastructure.", url: "/careers" },
 };
 
-const OPEN_POSITIONS = [
-  { title: "Senior Backend Engineer — Delivery Systems", team: "Engineering", location: "Remote (US/EU)" },
-  { title: "Frontend Engineer — Dashboard", team: "Engineering", location: "Remote (US/EU)" },
-  { title: "Developer Advocate", team: "Developer Relations", location: "Remote" },
-  { title: "Technical Support Engineer", team: "Support", location: "Remote (US)" },
-];
+// Open positions are admin-managed (create/edit/deactivate via /admin/careers), so
+// they're fetched per-request rather than hardcoded, unlike the Benefits/Culture/
+// Hiring-process sections below, which are static company-policy copy, not
+// individually postable listings.
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+async function getOpenPositions(): Promise<JobPostingOut[]> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/v1/content/job-postings`, { cache: "no-store" });
+    if (!res.ok) return [];
+    return res.json();
+  } catch {
+    return []; // marketing page should still render even if the API is briefly unreachable
+  }
+}
 
 const BENEFITS = [
   { title: "Remote-first", body: "Work from anywhere within a few hours of US or EU business hours. No office to relocate for." },
@@ -36,7 +46,9 @@ const HIRING_STEPS = [
   { title: "Offer", body: "If it's a match on both sides, we move fast -- usually within a few days of the final interview." },
 ];
 
-export default function CareersPage() {
+export default async function CareersPage() {
+  const openPositions = await getOpenPositions();
+
   return (
     <>
       <Section className="pb-8 pt-16 sm:pt-20">
@@ -52,29 +64,33 @@ export default function CareersPage() {
 
       <Section className="pt-0">
         <SectionHeading eyebrow="Open positions" title="Where we're hiring" />
-        <div className="mt-8 flex flex-col divide-y divide-graphite-100 border-y border-graphite-100 dark:divide-graphite-800 dark:border-graphite-800">
-          {OPEN_POSITIONS.map((p) => (
-            <Link
-              key={p.title}
-              href="/contact"
-              className="flex flex-col items-start justify-between gap-2 py-4 sm:flex-row sm:items-center"
-            >
-              <div>
-                <h3 className="text-sm font-medium text-graphite-950 dark:text-graphite-50">{p.title}</h3>
-                <div className="mt-1 flex items-center gap-3 text-xs text-graphite-500">
-                  <Badge tone="neutral">{p.team}</Badge>
-                  <span className="flex items-center gap-1">
-                    <MapPin className="h-3 w-3" />
-                    {p.location}
-                  </span>
+        {openPositions.length === 0 ? (
+          <p className="mt-8 text-sm text-graphite-500">No open positions right now -- check back soon.</p>
+        ) : (
+          <div className="mt-8 flex flex-col divide-y divide-graphite-100 border-y border-graphite-100 dark:divide-graphite-800 dark:border-graphite-800">
+            {openPositions.map((p) => (
+              <Link
+                key={p.id}
+                href="/contact"
+                className="flex flex-col items-start justify-between gap-2 py-4 sm:flex-row sm:items-center"
+              >
+                <div>
+                  <h3 className="text-sm font-medium text-graphite-950 dark:text-graphite-50">{p.title}</h3>
+                  <div className="mt-1 flex items-center gap-3 text-xs text-graphite-500">
+                    <Badge tone="neutral">{p.team}</Badge>
+                    <span className="flex items-center gap-1">
+                      <MapPin className="h-3 w-3" />
+                      {p.location}
+                    </span>
+                  </div>
                 </div>
-              </div>
-              <span className="flex items-center gap-1 text-xs font-medium text-signal-amber">
-                Apply <ArrowRight className="h-3 w-3" />
-              </span>
-            </Link>
-          ))}
-        </div>
+                <span className="flex items-center gap-1 text-xs font-medium text-signal-amber">
+                  Apply <ArrowRight className="h-3 w-3" />
+                </span>
+              </Link>
+            ))}
+          </div>
+        )}
         <p className="mt-4 text-xs text-graphite-500">
           Don&apos;t see a fit but think you should be here anyway?{" "}
           <Link href="/contact" className="text-signal-amber hover:underline">Reach out</Link> -- we read every message.
