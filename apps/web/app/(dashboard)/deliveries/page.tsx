@@ -150,7 +150,9 @@ export default function DeliveriesPage() {
                   <td className="px-4 py-2.5">
                     <StatusDot color={statusToSignalColor(d.status)} label={d.status} />
                   </td>
-                  <td className="tabular px-4 py-2.5">{d.attempt_number}</td>
+                  <td className="tabular px-4 py-2.5 text-graphite-500">
+                    {d.attempt_number} / {d.max_attempts}
+                  </td>
                   <td className="tabular px-4 py-2.5 text-graphite-600 dark:text-graphite-400">
                     {new Date(d.queued_at).toLocaleString()}
                   </td>
@@ -207,7 +209,9 @@ export default function DeliveriesPage() {
                           <td className="px-4 py-2">
                             <StatusDot color={statusToSignalColor(job.status)} label={job.status} />
                           </td>
-                          <td className="px-4 py-2 text-graphite-500">attempt {job.attempt_number}</td>
+                          <td className="px-4 py-2 text-graphite-500">
+                            {job.attempt_number} / {job.max_attempts}
+                          </td>
                           <td className="tabular px-4 py-2 text-graphite-500">
                             {job.completed_at ? new Date(job.completed_at).toLocaleString() : "—"}
                           </td>
