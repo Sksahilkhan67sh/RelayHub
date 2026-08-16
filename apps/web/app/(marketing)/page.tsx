@@ -300,9 +300,17 @@ export default function LandingPage() {
               <pre className="overflow-x-auto p-4 font-mono text-[12.5px] leading-relaxed text-graphite-200">
 {`import { createHmac, timingSafeEqual } from "crypto";
 
-function isValid(payload, signature, secret) {
+// rawBody must be the exact bytes RelayHub sent (e.g. a Buffer from your
+// framework's raw-body middleware) -- re-serializing parsed JSON can shift
+// whitespace/key order and silently break verification.
+function isValid(rawBody, headers, secret) {
+  const signature = headers["x-relayhub-signature"];
+  const timestamp = headers["x-relayhub-timestamp"];
+  const nonce = headers["x-relayhub-nonce"];
+
+  const signedString = \`\${timestamp}.\${nonce}.\` + rawBody;
   const expected = createHmac("sha256", secret)
-    .update(payload)
+    .update(signedString)
     .digest("hex");
 
   return timingSafeEqual(
