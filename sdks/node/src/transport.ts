@@ -68,7 +68,13 @@ export class Transport {
           method,
           signal: controller.signal,
           headers: {
-            Authorization: `Bearer ${this.config.apiKey}`,
+            // The backend's API-key auth dependency (app/modules/api_keys/dependencies.py)
+            // reads ONLY this header -- Authorization: Bearer is reserved for dashboard user
+            // JWT sessions (app/modules/auth/dependencies.py), a completely separate auth
+            // path. Sending Authorization here (as this transport did until this fix) means
+            // every request 401s against the real backend with "Missing X-RelayHub-Api-Key
+            // header", regardless of how valid the key is.
+            "X-RelayHub-Api-Key": this.config.apiKey,
             "Content-Type": "application/json",
             "User-Agent": "relayhub-node/1.0.0",
             ...this.config.defaultHeaders,
