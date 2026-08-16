@@ -120,9 +120,13 @@ final class Transport {
 
             HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(url))
                     .timeout(effectiveTimeout)
-                    .header("Authorization", "Bearer " + apiKey)
+                    // See the matching comment in the Node SDK's transport.ts -- the backend's
+                    // API-key auth dependency (app/modules/api_keys/dependencies.py) reads ONLY
+                    // this header. Authorization: Bearer is reserved for dashboard user JWT
+                    // sessions, a separate auth path this client never uses.
+                    .header("X-RelayHub-Api-Key", apiKey)
                     .header("Content-Type", "application/json")
-                    .header("User-Agent", "relayhub-java/1.0.0");
+                    .header("User-Agent", "relayhub-java/1.0.1");
             defaultHeaders.forEach(builder::header);
             if (options != null) options.headers.forEach(builder::header);
 
