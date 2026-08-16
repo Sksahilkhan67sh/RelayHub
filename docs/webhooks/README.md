@@ -29,11 +29,12 @@ here; see step 3.
 ## 2. Publishing an event
 
 Publishing uses an **API key**, not a session token (`POST /events` requires the
-`events:write` scope):
+`events:write` scope). The key goes in its own header -- `Authorization: Bearer`
+is reserved for dashboard user sessions (JWTs), a separate auth path:
 
 ```bash
 curl -X POST https://api.relayhub.dev/v1/events \
-  -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" \
+  -H "X-RelayHub-Api-Key: $API_KEY" -H "Content-Type: application/json" \
   -d '{
     "event": "payment.success",
     "payload": {"order_id": "ord_123", "amount": 4200},
@@ -64,16 +65,25 @@ both sides.
 
 ## 4. Verifying signatures
 
-Each delivery includes a signature header computed the same way described in
-the landing page's developer-experience section. Verify it before trusting the
+Each delivery includes four signing-related headers: `X-RelayHub-Signature`,
+`X-RelayHub-Timestamp`, `X-RelayHub-Nonce`, plus `X-RelayHub-Event` and
+`X-RelayHub-Delivery-ID` for convenience. The signature is HMAC-SHA256 over
+`"<timestamp>.<nonce>."` concatenated with the raw request body -- not the body
+alone -- which is what makes the timestamp/nonce tamper-evident (see
+`backend/app/modules/delivery/signing.py`). Verify it before trusting the
 payload:
 
 ```js
 import { createHmac, timingSafeEqual } from "crypto";
 
-function isValidSignature(rawBody, signatureHeader, secret) {
-  const expected = createHmac("sha256", secret).update(rawBody).digest("hex");
-  return timingSafeEqual(Buffer.from(signatureHeader), Buffer.from(expected));
+function isValidSignature(rawBody, headers, secret) {
+  const signature = headers["x-relayhub-signature"];
+  const timestamp = headers["x-relayhub-timestamp"];
+  const nonce = headers["x-relayhub-nonce"];
+
+  const signedString = `${timestamp}.${nonce}.` + rawBody;
+  const expected = createHmac("sha256", secret).update(signedString).digest("hex");
+  return timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
 }
 ```
 
