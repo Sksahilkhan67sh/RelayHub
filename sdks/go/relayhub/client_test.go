@@ -16,6 +16,30 @@ func newTestClient(t *testing.T, handler http.HandlerFunc) (*Client, *httptest.S
 	return client, server
 }
 
+func TestSendsXRelayHubApiKeyHeaderMatchingBackendAuthDependency(t *testing.T) {
+	var capturedAPIKeyHeader, capturedAuthHeader string
+	client, server := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		capturedAPIKeyHeader = r.Header.Get("X-RelayHub-Api-Key")
+		capturedAuthHeader = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(Endpoint{ID: "ep_123", Name: "Test"})
+	})
+	defer server.Close()
+
+	_, err := client.Endpoints.Get(context.Background(), "ep_123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if capturedAPIKeyHeader != "test_key" {
+		t.Errorf("expected X-RelayHub-Api-Key header to be sent, got %q", capturedAPIKeyHeader)
+	}
+	// Regression guard: this transport previously sent Authorization: Bearer instead,
+	// which the backend's API-key auth dependency never reads -- every real request 401'd.
+	if capturedAuthHeader != "" {
+		t.Errorf("expected no Authorization header, got %q", capturedAuthHeader)
+	}
+}
+
 func TestGetReturnsDecodedResponse(t *testing.T) {
 	client, server := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
