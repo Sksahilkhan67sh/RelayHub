@@ -14,7 +14,7 @@
        can be migrated to dev.relayhub with a version bump. -->
   <groupId>io.github.Sksahilkhan67sh</groupId>
   <artifactId>relayhub-sdk</artifactId>
-  <version>1.0.0</version>
+  <version>1.0.1</version>
   <packaging>jar</packaging>
 
   <name>RelayHub Java SDK</name>
@@ -125,7 +125,7 @@
               <goal>sign</goal>
             </goals>
             <configuration>
-              <keyname>15D9A114191C0947</keyname>
+              <keyname>REPLACE_WITH_YOUR_GPG_KEY_ID</keyname>
             </configuration>
           </execution>
         </executions>
