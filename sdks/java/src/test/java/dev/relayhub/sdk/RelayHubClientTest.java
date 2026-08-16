@@ -1,5 +1,6 @@
 package dev.relayhub.sdk;
 
+import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
@@ -46,6 +47,22 @@ class RelayHubClientTest {
         exchange.sendResponseHeaders(status, bytes.length);
         exchange.getResponseBody().write(bytes);
         exchange.close();
+    }
+
+    @Test
+    void sendsXRelayHubApiKeyHeaderMatchingBackendAuthDependency() throws IOException {
+        java.util.concurrent.atomic.AtomicReference<Headers> capturedHeaders = new java.util.concurrent.atomic.AtomicReference<>();
+        RelayHubClient client = clientFor((exchange, count) -> {
+            capturedHeaders.set(exchange.getRequestHeaders());
+            try { respond(exchange, 200, "{\"id\":\"ep_123\",\"name\":\"Test\"}"); } catch (IOException e) { throw new RuntimeException(e); }
+        });
+        client.getEndpoints().get("ep_123");
+
+        Headers headers = capturedHeaders.get();
+        assertEquals("test_key", headers.getFirst("X-RelayHub-Api-Key"));
+        // Regression guard: this transport previously sent Authorization: Bearer instead,
+        // which the backend's API-key auth dependency never reads -- every real request 401'd.
+        assertNull(headers.getFirst("Authorization"));
     }
 
     @Test
