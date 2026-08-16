@@ -10,6 +10,21 @@ function jsonResponse(status: number, body: unknown, headers: Record<string, str
   });
 }
 
+test("sends X-RelayHub-Api-Key, matching the backend's actual API-key auth dependency", async () => {
+  let capturedHeaders: Headers | undefined;
+  const fakeFetch: typeof fetch = async (_url, init) => {
+    capturedHeaders = new Headers(init?.headers);
+    return jsonResponse(200, { id: "ep_123", name: "Test" });
+  };
+  const client = new RelayHubClient({ apiKey: "test_key_abc", fetch: fakeFetch, maxRetries: 0 });
+  await client.endpoints.get("ep_123");
+
+  assert.equal(capturedHeaders?.get("x-relayhub-api-key"), "test_key_abc");
+  // Regression guard: this transport previously sent Authorization: Bearer instead,
+  // which the backend's API-key dependency never reads -- every real request 401'd.
+  assert.equal(capturedHeaders?.get("authorization"), null);
+});
+
 test("successful GET returns parsed JSON", async () => {
   const fakeFetch: typeof fetch = async () => jsonResponse(200, { id: "ep_123", name: "Test" });
   const client = new RelayHubClient({ apiKey: "test_key", fetch: fakeFetch, maxRetries: 0 });
