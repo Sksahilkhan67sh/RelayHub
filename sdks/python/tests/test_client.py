@@ -22,6 +22,22 @@ def json_response(status: int, body, headers: dict | None = None) -> httpx.Respo
     return httpx.Response(status, json=body, headers=headers or {})
 
 
+def test_sends_x_relayhub_api_key_header_matching_backend_auth_dependency():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["headers"] = request.headers
+        return json_response(200, {"id": "ep_123", "name": "Test"})
+
+    client = make_client(handler)
+    client.endpoints.get("ep_123")
+
+    assert captured["headers"].get("x-relayhub-api-key") == "test_key"
+    # Regression guard: this transport previously sent Authorization: Bearer instead,
+    # which the backend's API-key dependency never reads -- every real request 401'd.
+    assert "authorization" not in captured["headers"]
+
+
 def test_successful_get_returns_parsed_json():
     def handler(request: httpx.Request) -> httpx.Response:
         return json_response(200, {"id": "ep_123", "name": "Test"})
