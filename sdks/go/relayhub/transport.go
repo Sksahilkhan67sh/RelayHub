@@ -119,9 +119,13 @@ func (t *transport) do(ctx context.Context, method, path string, body any, opts 
 			cancel()
 			return nil, fmt.Errorf("relayhub: failed to build request: %w", err)
 		}
-		req.Header.Set("Authorization", "Bearer "+t.apiKey)
+		// See the matching comment in the Node SDK's transport.ts -- the backend's
+		// API-key auth dependency (app/modules/api_keys/dependencies.py) reads ONLY
+		// this header. Authorization: Bearer is reserved for dashboard user JWT
+		// sessions, a separate auth path this client never uses.
+		req.Header.Set("X-RelayHub-Api-Key", t.apiKey)
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("User-Agent", "relayhub-go/1.0.0")
+		req.Header.Set("User-Agent", "relayhub-go/1.0.1")
 		for k, v := range t.defaultHeaders {
 			req.Header.Set(k, v)
 		}
