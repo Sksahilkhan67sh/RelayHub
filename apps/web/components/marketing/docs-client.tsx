@@ -179,24 +179,36 @@ const SECTIONS: DocSection[] = [
   {
     id: "sdks",
     title: "SDKs",
-    keywords: "sdks node python typed client library rest api",
+    keywords: "sdks node python go java typed client library rest api install",
     body: (
       <>
         <p>
-          Typed client libraries aren&apos;t available yet -- the REST API is fully documented and works with any HTTP
-          client today. Node.js and Python SDKs are next on the roadmap; track progress on the{" "}
-          <Link href="/changelog" className="text-signal-amber hover:underline">Changelog</Link>.
+          The Node.js SDK is published and installable today:{" "}
+          <code>npm install relayhub-sdk</code>. It wraps the full REST API -- events, endpoints, deliveries, DLQ,
+          analytics, billing, notifications -- in a typed client with automatic retries on 429/5xx.
+        </p>
+        <p>
+          Python, Go, and Java SDKs exist in the repository with the same API surface and are fully tested, but aren&apos;t
+          published to their package registries yet (PyPI, a versioned Go module release, and Maven Central respectively).
+          Until then, the REST API works with any HTTP client in any language.
         </p>
       </>
     ),
-    status: "coming-soon",
   },
   {
     id: "cli",
     title: "CLI",
-    keywords: "cli command line terminal tail logs",
-    body: <p>A command-line tool for managing endpoints and tailing delivery logs from your terminal is planned but not yet built.</p>,
-    status: "coming-soon",
+    keywords: "cli command line terminal endpoints publish deliveries replay dlq",
+    body: (
+      <>
+        <p>
+          A command-line tool (<code>relay</code>) exists in the repository, covering endpoints, publishing events,
+          searching deliveries, replaying dead-lettered jobs, DLQ management, analytics, billing, and alert rules --
+          run <code>relay --help</code> for the full command list once you have it checked out.
+        </p>
+        <p>It isn&apos;t published to npm yet, so for now it&apos;s built and run from source rather than installed globally.</p>
+      </>
+    ),
   },
 ];
 
