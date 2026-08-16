@@ -55,9 +55,13 @@ class Transport:
             request_body["idempotency_key"] = options.idempotency_key
 
         headers = {
-            "Authorization": f"Bearer {self._config.api_key}",
+            # See the matching comment in the Node SDK's transport.ts -- the backend's
+            # API-key auth dependency (app/modules/api_keys/dependencies.py) reads ONLY
+            # this header. Authorization: Bearer is reserved for dashboard user JWT
+            # sessions, a separate auth path this client never uses.
+            "X-RelayHub-Api-Key": self._config.api_key,
             "Content-Type": "application/json",
-            "User-Agent": "relayhub-python/1.0.0",
+            "User-Agent": "relayhub-python/1.0.1",
             **self._config.default_headers,
             **(options.headers or {}),
         }
