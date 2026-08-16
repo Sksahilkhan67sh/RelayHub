@@ -1,6 +1,6 @@
 [project]
 name = "relayhub"
-version = "1.0.0"
+version = "1.0.1"
 description = "Official Python SDK for the RelayHub webhook and event delivery API."
 readme = "README.md"
 requires-python = ">=3.10"
