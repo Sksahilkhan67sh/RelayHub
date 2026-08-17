@@ -111,6 +111,10 @@ export default function DevelopersPage() {
             </div>
           ))}
         </div>
+        <Link href="/developers/concepts" className="mt-6 flex w-fit items-center gap-1 text-sm font-medium text-signal-amber hover:underline">
+          See every concept in detail
+          <ArrowRight className="h-3.5 w-3.5" />
+        </Link>
       </Section>
 
       <div className="border-t border-graphite-100 bg-graphite-50 dark:border-graphite-800 dark:bg-graphite-900/40">
