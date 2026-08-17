@@ -131,13 +131,19 @@ export default function DevelopersPage() {
       <Section>
         <SectionHeading eyebrow="Quick look" title="Publish your first event" />
         <div className="mt-8 grid gap-8 lg:grid-cols-2 lg:items-center">
-          <p className="text-[14.5px] leading-relaxed text-graphite-600 dark:text-graphite-400">
-            This is the entire integration for the common case: publish an event with the Node.js SDK, and RelayHub
-            handles signing, delivery, retries, and logging for every endpoint subscribed to it. The same call is one
-            HTTP request if you&apos;re not using Node -- see the{" "}
-            <Link href="/docs#events" className="text-signal-amber hover:underline">Events</Link> section of the docs
-            for the raw REST shape.
-          </p>
+          <div className="flex flex-col gap-4">
+            <p className="text-[14.5px] leading-relaxed text-graphite-600 dark:text-graphite-400">
+              This is the entire integration for the common case: publish an event with the Node.js SDK, and RelayHub
+              handles signing, delivery, retries, and logging for every endpoint subscribed to it. The same call is one
+              HTTP request if you&apos;re not using Node -- see the{" "}
+              <Link href="/docs#events" className="text-signal-amber hover:underline">Events</Link> section of the docs
+              for the raw REST shape.
+            </p>
+            <Link href="/developers/quickstart" className="flex w-fit items-center gap-1 text-sm font-medium text-signal-amber hover:underline">
+              Walk through the full 5-minute quickstart
+              <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
+          </div>
           <div className="overflow-hidden rounded-md border border-graphite-800 bg-graphite-950">
             <div className="flex items-center justify-between border-b border-graphite-800 px-4 py-2">
               <span className="font-mono text-[11px] text-graphite-500">Node.js</span>
