@@ -207,7 +207,7 @@ print(result["delivery_jobs"])`,
       </div>
 
       {/* Step 5 */}
-      <Section className="py-10">
+      <Section id="verify" className="scroll-mt-20 py-10">
         <SectionHeading eyebrow="Step 5" title="Verify the delivery on your side" />
         <p className="mt-4 max-w-2xl text-[14px] leading-relaxed text-graphite-600 dark:text-graphite-400">
           Every delivery is signed with HMAC-SHA256 over the timestamp, a nonce, and the raw body -- not the body
