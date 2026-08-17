@@ -137,7 +137,11 @@ const CONCEPTS: { id: string; title: string; body: React.ReactNode }[] = [
         Every delivery is signed: HMAC-SHA256 over <code>{"<timestamp>.<nonce>."}</code> concatenated with the raw
         request body, sent as <code>X-RelayHub-Signature</code> alongside <code>X-RelayHub-Timestamp</code> and{" "}
         <code>X-RelayHub-Nonce</code>. Signing the timestamp and nonce, not just the body, is what makes a captured
-        request unusable for replay attacks.
+        request unusable for replay attacks -- see{" "}
+        <Link href="/developers/security#signatures" className="text-signal-amber hover:underline">
+          the full security architecture
+        </Link>{" "}
+        for verification code.
       </>
     ),
   },
