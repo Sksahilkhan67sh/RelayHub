@@ -92,7 +92,8 @@ const CONCEPTS: { id: string; title: string; body: React.ReactNode }[] = [
       <>
         The default schedule is 5 total attempts: an immediate first try, then retries at 10s, 30s, 1m, and 5m (each
         with +/-20% jitter, so many simultaneously failing jobs don&apos;t retry in lockstep against a still-recovering
-        endpoint). Any endpoint can override the max-attempts count individually.
+        endpoint). Any endpoint can override the max-attempts count individually -- see the{" "}
+        <Link href="/developers/retries" className="text-signal-amber hover:underline">full retries guide</Link>.
       </>
     ),
   },
@@ -114,7 +115,8 @@ const CONCEPTS: { id: string; title: string; body: React.ReactNode }[] = [
       <>
         Where a job lands after exhausting every retry attempt without succeeding -- it doesn&apos;t just disappear.
         DLQ entries are listable, individually inspectable, exportable, and deletable via{" "}
-        <code>/v1/dlq</code>.
+        <code>/v1/dlq</code>. See the{" "}
+        <Link href="/developers/dead-letter-queue" className="text-signal-amber hover:underline">full DLQ guide</Link>.
       </>
     ),
   },
@@ -125,7 +127,8 @@ const CONCEPTS: { id: string; title: string; body: React.ReactNode }[] = [
       <>
         Once you&apos;ve fixed whatever caused the failure, re-queue a dead-lettered job as a fresh delivery attempt
         with <code>POST /v1/dlq/{"{id}"}/retry</code>, or replay several at once with{" "}
-        <code>POST /v1/dlq/bulk-retry</code>.
+        <code>POST /v1/dlq/bulk-retry</code>. See the{" "}
+        <Link href="/developers/replay" className="text-signal-amber hover:underline">full replay guide</Link>.
       </>
     ),
   },
