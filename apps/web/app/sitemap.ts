@@ -10,6 +10,7 @@ const STATIC_ROUTES = [
   "/developers",
   "/developers/quickstart",
   "/developers/concepts",
+  "/developers/security",
   "/pricing",
   "/docs",
   "/about",
