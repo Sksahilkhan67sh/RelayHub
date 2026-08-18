@@ -14,6 +14,7 @@ const STATIC_ROUTES = [
   "/developers/retries",
   "/developers/dead-letter-queue",
   "/developers/replay",
+  "/developers/troubleshooting",
   "/pricing",
   "/docs",
   "/about",
