@@ -105,9 +105,9 @@ export default function ReplayPage() {
       </div>
 
       <Section className="flex flex-col items-center gap-3 py-16 text-center">
-        <p className="text-sm text-graphite-600 dark:text-graphite-400">Want to see the full delivery attempt history?</p>
-        <Link href="/developers/concepts#delivery-attempts" className="flex items-center gap-1 text-sm font-medium text-signal-amber hover:underline">
-          Back to Concepts
+        <p className="text-sm text-graphite-600 dark:text-graphite-400">Still failing after a fix and a replay?</p>
+        <Link href="/developers/troubleshooting" className="flex items-center gap-1 text-sm font-medium text-signal-amber hover:underline">
+          Read the troubleshooting guide
           <ArrowRight className="h-3.5 w-3.5" />
         </Link>
       </Section>
