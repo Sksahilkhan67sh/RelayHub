@@ -13,6 +13,7 @@ honest implementation here, not a corner cut.
 
 from __future__ import annotations
 
+import asyncio
 import smtplib
 from email.mime.text import MIMEText
 from functools import lru_cache
@@ -40,7 +41,10 @@ class RealNotificationDispatcher:
         elif channel == "webhook":
             await self._send_webhook(config, subject, message)
         elif channel == "email":
-            self._send_email(config, subject, message)
+            # smtplib is blocking; running it directly on the event loop would
+            # stall every other in-flight request for the duration of the SMTP
+            # connect/TLS/login/send round trip. Offload to a worker thread.
+            await asyncio.to_thread(self._send_email, config, subject, message)
         elif channel == "sms":
             raise NotImplementedError(
                 "SMS is an architecture hook per spec, not yet a working channel. "
