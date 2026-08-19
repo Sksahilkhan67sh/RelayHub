@@ -10,6 +10,15 @@ import { Card, CardHeader, CardBody } from "@/components/ui/card";
 import { StatusDot } from "@/components/ui/status-dot";
 import { Loader2 } from "lucide-react";
 
+// The dashboard's KPI cards are labeled "today" (e.g. "Deliveries today"), so the
+// underlying analytics calls need to be scoped to today -- the API defaults to
+// all-time totals when start_date/end_date are omitted.
+function getTodayRange(): { start: string; end: string } {
+  const now = new Date();
+  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return { start: startOfDay.toISOString(), end: now.toISOString() };
+}
+
 export default function DashboardPage() {
   const [summary, setSummary] = useState<AnalyticsSummary | null>(null);
   const [timeSeries, setTimeSeries] = useState<TimeSeriesBucket[]>([]);
@@ -23,10 +32,12 @@ export default function DashboardPage() {
 
     async function load() {
       try {
+        const { start, end } = getTodayRange();
+        const dateParams = `start_date=${encodeURIComponent(start)}&end_date=${encodeURIComponent(end)}`;
         const [summaryData, timeSeriesData, topEndpointsData, usageData] = await Promise.all([
-          api.get<AnalyticsSummary>("/v1/analytics/summary"),
-          api.get<TimeSeriesBucket[]>("/v1/analytics/deliveries-over-time?granularity=hour"),
-          api.get<TopEndpoint[]>("/v1/analytics/top-endpoints?limit=5"),
+          api.get<AnalyticsSummary>(`/v1/analytics/summary?${dateParams}`),
+          api.get<TimeSeriesBucket[]>(`/v1/analytics/deliveries-over-time?granularity=hour&${dateParams}`),
+          api.get<TopEndpoint[]>(`/v1/analytics/top-endpoints?limit=5&${dateParams}`),
           api.get<UsageSummary>("/v1/billing/usage"),
         ]);
         if (cancelled) return;
