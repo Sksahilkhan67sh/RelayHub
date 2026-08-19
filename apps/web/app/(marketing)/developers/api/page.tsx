@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/card";
 
 export const metadata: Metadata = {
   title: "API Reference — RelayHub Developers",
-  description: "Complete reference for the RelayHub REST API: events, endpoints, deliveries, logs, and the dead-letter queue -- every method, path, auth requirement, and field verified against source.",
+  description: "Complete reference for the RelayHub REST API: authentication, API keys, organizations, events, endpoints, deliveries, logs, and the dead-letter queue -- every method, path, auth requirement, and field verified against source.",
   alternates: { canonical: "/developers/api" },
   openGraph: {
     title: "RelayHub API Reference",
@@ -41,6 +41,96 @@ interface Module {
 }
 
 const MODULES: Module[] = [
+  {
+    id: "authentication",
+    title: "Authentication",
+    intro: "Dashboard user sessions -- separate from API keys, which have their own module below.",
+    endpoints: [
+      {
+        method: "POST",
+        path: "/v1/auth/register",
+        auth: "None (public)",
+        summary: "Create a user account and its first organization in one call.",
+        body: [
+          { name: "email", type: "string" },
+          { name: "password", type: "string", note: "8-128 chars, needs 1 uppercase + 1 digit" },
+          { name: "full_name", type: "string" },
+          { name: "organization_name", type: "string" },
+        ],
+        response: "TokenResponse -- access_token, refresh_token, token_type: \"bearer\", expires_in",
+      },
+      { method: "POST", path: "/v1/auth/login", auth: "None (public)", summary: "Exchange email/password for a session.", body: [{ name: "email", type: "string" }, { name: "password", type: "string" }], response: "TokenResponse" },
+      { method: "POST", path: "/v1/auth/refresh", auth: "None (public)", summary: "Exchange a refresh token for a new access token.", body: [{ name: "refresh_token", type: "string" }], response: "TokenResponse" },
+      { method: "POST", path: "/v1/auth/logout", auth: "Session", summary: "Invalidate the current session.", response: "204 No Content" },
+      {
+        method: "GET",
+        path: "/v1/auth/me",
+        auth: "Session",
+        summary: "Fetch the current user, their organization, and their role in it.",
+        response: "MeResponse -- user (id, email, full_name, is_email_verified, is_platform_admin), organization (id, name, slug), role",
+      },
+      { method: "POST", path: "/v1/auth/forgot-password", auth: "None (public)", summary: "Request a password reset email.", body: [{ name: "email", type: "string" }], response: "ForgotPasswordResponse -- message (always generic, to avoid confirming whether an email exists)" },
+      { method: "POST", path: "/v1/auth/reset-password", auth: "None (public)", summary: "Complete a password reset with the emailed token.", body: [{ name: "token", type: "string" }, { name: "new_password", type: "string", note: "same complexity rule as registration" }], response: "204 No Content" },
+    ],
+  },
+  {
+    id: "api-keys",
+    title: "API keys",
+    intro: "Scoped, environment-bound credentials for server-to-server calls -- see the Authentication concept for how these differ from sessions.",
+    endpoints: [
+      {
+        method: "POST",
+        path: "/v1/api-keys",
+        auth: "Session (admin)",
+        summary: "Create a key. The full secret is returned exactly once, in this response only.",
+        body: [
+          { name: "name", type: "string" },
+          { name: "environment", type: "\"test\" | \"live\"", note: "default: test" },
+          { name: "scopes", type: "string[]", note: "default: [events:write, events:read]" },
+          { name: "expires_in_days", type: "int? (1-3650)" },
+        ],
+        response: "ApiKeyCreatedResponse -- id, name, environment, scopes, key (full secret, shown once), key_prefix, expires_at, created_at",
+      },
+      {
+        method: "GET",
+        path: "/v1/api-keys",
+        auth: "Session (viewer)",
+        summary: "List keys. Never includes the secret -- only a masked representation.",
+        response: "ApiKeyOut[] -- id, name, environment, scopes, key_prefix, masked_key, last_used_at, expires_at, revoked_at, is_active, created_at",
+      },
+      { method: "POST", path: "/v1/api-keys/{key_id}/revoke", auth: "Session (admin)", summary: "Revoke a key immediately -- no grace period.", body: [{ name: "reason", type: "string?" }], response: "ApiKeyOut" },
+      { method: "POST", path: "/v1/api-keys/{key_id}/rotate", auth: "Session (admin)", summary: "Revoke the old key and issue a new one with the same name/scopes in one call.", response: "ApiKeyCreatedResponse" },
+    ],
+  },
+  {
+    id: "organizations",
+    title: "Organizations & members",
+    intro: "Manage your organization's settings, members, and pending invitations.",
+    endpoints: [
+      { method: "PATCH", path: "/v1/org", auth: "Session (admin)", summary: "Rename your organization.", body: [{ name: "name", type: "string" }], response: "OrganizationOut -- id, name, slug" },
+      { method: "GET", path: "/v1/org/members", auth: "Session (viewer)", summary: "List every member of your organization.", response: "MemberOut[] -- user_id, email, full_name, role, invited_by_user_id, accepted_at, joined_at" },
+      { method: "PATCH", path: "/v1/org/members/{user_id}", auth: "Session (admin)", summary: "Change a member's role.", body: [{ name: "role", type: "\"owner\" | \"admin\" | \"member\" | \"viewer\"" }], response: "204 No Content" },
+      { method: "DELETE", path: "/v1/org/members/{user_id}", auth: "Session (admin)", summary: "Remove a member from the organization.", response: "204 No Content" },
+      { method: "POST", path: "/v1/org/invitations", auth: "Session (admin)", summary: "Invite someone by email.", body: [{ name: "email", type: "string" }, { name: "role", type: "Role", note: "default: member" }], response: "InvitationOut -- id, organization_id, email, role, invited_by_user_id, status, expires_at, accepted_at, revoked_at, created_at" },
+      { method: "GET", path: "/v1/org/invitations", auth: "Session (admin)", summary: "List pending/past invitations.", response: "InvitationOut[]" },
+      { method: "POST", path: "/v1/org/invitations/{invitation_id}/revoke", auth: "Session (admin)", summary: "Revoke a pending invitation.", response: "InvitationOut" },
+      {
+        method: "GET",
+        path: "/v1/invitations/{token}",
+        auth: "None (public)",
+        summary: "Look up an invitation by its emailed token -- deliberately minimal fields since this is reachable before any login.",
+        response: "InvitationPublicOut -- organization_name, email, role, status, expires_at",
+      },
+      {
+        method: "POST",
+        path: "/v1/invitations/accept",
+        auth: "None (public)",
+        summary: "Accept an invitation. If the invitee has no account yet, full_name/password also create one.",
+        body: [{ name: "token", type: "string" }, { name: "full_name", type: "string?", note: "required only for a brand-new account" }, { name: "password", type: "string?", note: "required only for a brand-new account" }],
+        response: "TokenResponse",
+      },
+    ],
+  },
   {
     id: "events",
     title: "Events",
@@ -221,11 +311,11 @@ export default function ApiReferencePage() {
         <h1 className="mt-3 text-4xl font-semibold tracking-tight text-graphite-950 sm:text-5xl dark:text-graphite-50">API Reference</h1>
         <p className="mt-4 max-w-2xl text-[15px] leading-relaxed text-graphite-600 dark:text-graphite-400">
           Every field below is copied from the real Pydantic request/response schemas -- nothing paraphrased from
-          memory. Covers the core delivery pipeline: Events, Endpoints, Deliveries, Logs, and the DLQ.
+          memory. Covers authentication, API keys, organizations, and the core delivery pipeline: Events, Endpoints,
+          Deliveries, Logs, and the DLQ.
         </p>
         <p className="mt-3 max-w-2xl text-[13px] text-graphite-500">
-          Not yet covered here: Authentication, API keys, Analytics, Billing, Notifications, Audit, and Admin --
-          those modules are next.
+          Not yet covered here: Analytics, Billing, Notifications, Audit, and Admin -- those modules are next.
         </p>
       </Section>
 
