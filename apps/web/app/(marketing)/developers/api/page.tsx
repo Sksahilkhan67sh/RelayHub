@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/card";
 
 export const metadata: Metadata = {
   title: "API Reference — RelayHub Developers",
-  description: "Complete reference for the RelayHub REST API: authentication, API keys, organizations, events, endpoints, deliveries, logs, and the dead-letter queue -- every method, path, auth requirement, and field verified against source.",
+  description: "Complete reference for the entire RelayHub REST API -- authentication, API keys, organizations, events, endpoints, deliveries, logs, DLQ, analytics, billing, notifications, audit logs, and admin -- every method, path, auth requirement, and field verified against source.",
   alternates: { canonical: "/developers/api" },
   openGraph: {
     title: "RelayHub API Reference",
@@ -292,6 +292,114 @@ const MODULES: Module[] = [
       },
     ],
   },
+  {
+    id: "analytics",
+    title: "Analytics",
+    intro: "Aggregate delivery metrics -- volume, latency percentiles, and per-endpoint health. All endpoints accept optional environment / start_date / end_date filters.",
+    endpoints: [
+      {
+        method: "GET",
+        path: "/v1/analytics/summary",
+        auth: "Session (viewer)",
+        summary: "Org-wide totals for the selected window.",
+        params: [{ name: "environment", type: "string?" }, { name: "start_date / end_date", type: "datetime?" }],
+        response: "SummaryOut -- total_events, total_deliveries, success_count, failed_count, retrying_count, dead_letter_count, success_rate, failure_rate, latency_p50_ms, latency_p95_ms, latency_p99_ms",
+      },
+      {
+        method: "GET",
+        path: "/v1/analytics/deliveries-over-time",
+        auth: "Session (viewer)",
+        summary: "Delivery volume bucketed by hour or day.",
+        params: [{ name: "granularity", type: "\"hour\" | \"day\"", note: "default: hour" }, { name: "environment, start_date, end_date", type: "same as above" }],
+        response: "TimeSeriesBucket[] -- bucket, total_count, success_count, failed_count",
+      },
+      { method: "GET", path: "/v1/analytics/events-by-type", auth: "Session (viewer)", summary: "Event volume grouped by event type.", response: "EventTypeVolume[] -- event_type, count" },
+      { method: "GET", path: "/v1/analytics/top-endpoints", auth: "Session (viewer)", summary: "Busiest endpoints by delivery volume.", response: "TopEndpointOut[] -- endpoint_id, name, delivery_count, success_count, success_rate, avg_latency_ms" },
+      { method: "GET", path: "/v1/analytics/endpoint-health", auth: "Session (viewer)", summary: "Current health snapshot for every endpoint.", response: "EndpointHealthOut[] -- endpoint_id, name, health_status, consecutive_failure_count, last_success_at, last_failure_at, is_active" },
+      { method: "GET", path: "/v1/analytics/export", auth: "Session (viewer)", summary: "Download analytics data for offline analysis.", response: "File download" },
+    ],
+  },
+  {
+    id: "billing",
+    title: "Billing",
+    intro: "Plan, subscription, usage, and invoice data. Checkout and portal sessions are Stripe-hosted.",
+    endpoints: [
+      { method: "GET", path: "/v1/billing/plans", auth: "Session (viewer)", summary: "List every available plan tier.", response: "PlanOut[] -- id, tier, name, price_cents, max_deliveries_per_month, max_endpoints, log_retention_days, rate_limit_per_minute/hour/day, allow_overage, has_advanced_analytics, has_priority_support, has_sso" },
+      { method: "GET", path: "/v1/billing/subscription", auth: "Session (viewer)", summary: "Your organization's current subscription.", response: "SubscriptionOut -- id, plan (full PlanOut), status, current_period_start/end, trial_end, cancel_at_period_end" },
+      { method: "GET", path: "/v1/billing/usage", auth: "Session (viewer)", summary: "Usage against your plan's limits for the current period.", response: "UsageOut -- period_start/end, delivery_count, max_deliveries_per_month, percent_used, endpoint_count, max_endpoints" },
+      { method: "GET", path: "/v1/billing/invoices", auth: "Session (viewer)", summary: "Past invoices.", response: "InvoiceOut[] -- id, stripe_invoice_id, amount_cents, status, invoice_pdf_url, period_start/end, created_at" },
+      { method: "POST", path: "/v1/billing/checkout", auth: "Session (owner)", summary: "Start a Stripe Checkout session to upgrade/subscribe.", body: [{ name: "tier", type: "\"starter\" | \"pro\" | \"enterprise\"" }], response: "CheckoutSessionOut -- Stripe-hosted checkout URL" },
+      { method: "POST", path: "/v1/billing/portal", auth: "Session (owner)", summary: "Start a Stripe Billing Portal session to manage payment methods/cancel.", response: "PortalSessionOut -- Stripe-hosted portal URL" },
+      { method: "POST", path: "/v1/billing/webhook", auth: "Stripe webhook signature (not a user/API-key call)", summary: "Receives Stripe's own webhook events to keep subscription state in sync. Not something you call directly.", response: "204 No Content" },
+    ],
+  },
+  {
+    id: "notifications",
+    title: "Notifications (alerts)",
+    intro: "Called \"alerts\" in the backend and CLI/SDKs' \"notifications\" resources wrap this same module. Configure rules that fire on conditions like endpoint downtime or a DLQ spike.",
+    endpoints: [
+      {
+        method: "POST",
+        path: "/v1/alerts/rules",
+        auth: "Session (admin)",
+        summary: "Create an alert rule.",
+        body: [
+          { name: "condition_type", type: "endpoint_down | queue_full | dlq_spike | api_key_leak_suspicion | high_latency | repeated_failures | billing_threshold | rate_limit_abuse" },
+          { name: "severity", type: "info | warning | critical", note: "default: warning" },
+          { name: "channel", type: "email | slack | discord | webhook | sms", note: "sms is an architecture hook, not yet wired to a real provider" },
+          { name: "channel_config", type: "object" },
+          { name: "threshold_config", type: "object" },
+          { name: "throttle_window_minutes", type: "int (0-1440)", note: "default: see DEFAULT_THROTTLE_WINDOW_MINUTES" },
+          { name: "is_enabled", type: "bool", note: "default: true" },
+        ],
+        response: "AlertRuleOut",
+      },
+      { method: "GET", path: "/v1/alerts/rules", auth: "Session (viewer)", summary: "List alert rules.", response: "AlertRuleOut[]" },
+      { method: "PATCH", path: "/v1/alerts/rules/{rule_id}", auth: "Session (admin)", summary: "Update a rule. All fields optional.", response: "AlertRuleOut" },
+      { method: "DELETE", path: "/v1/alerts/rules/{rule_id}", auth: "Session (admin)", summary: "Delete a rule.", response: "204 No Content" },
+      { method: "POST", path: "/v1/alerts/rules/{rule_id}/test", auth: "Session (admin)", summary: "Send a test firing of a rule to its configured channel.", response: "TestAlertResponse" },
+      { method: "GET", path: "/v1/alerts/history", auth: "Session (viewer)", summary: "Past alert firings.", response: "AlertEventOut[] -- id, condition_type, severity, message, resource_id, delivery_status, delivery_error, triggered_at" },
+    ],
+  },
+  {
+    id: "audit",
+    title: "Audit logs",
+    intro: "Every mutating action in your organization, recorded automatically.",
+    endpoints: [
+      {
+        method: "GET",
+        path: "/v1/audit-logs",
+        auth: "Session (admin)",
+        summary: "List audit entries.",
+        response: "AuditLogOut[] -- id, actor_user_id, action, resource_type, resource_id, metadata_json, ip_address, created_at",
+      },
+    ],
+  },
+  {
+    id: "admin",
+    title: "Admin",
+    intro: "Platform-operator endpoints, not for regular integrations -- requires is_platform_admin on your user account, a flag set on RelayHub's own team members, not a role your organization can grant itself. Included for completeness, not as something a typical customer will call.",
+    endpoints: [
+      { method: "GET", path: "/v1/admin/organizations", auth: "Platform admin", summary: "List every organization on the platform.", response: "AdminOrganizationOut[]" },
+      { method: "POST", path: "/v1/admin/organizations/{id}/suspend", auth: "Platform admin", summary: "Suspend an organization.", response: "AdminOrganizationOut" },
+      { method: "POST", path: "/v1/admin/organizations/{id}/unsuspend", auth: "Platform admin", summary: "Lift a suspension.", response: "ForceActionResponse" },
+      { method: "POST", path: "/v1/admin/organizations/{id}/impersonate", auth: "Platform admin", summary: "Get a session token for a customer's organization, for support purposes.", response: "ImpersonationResponse" },
+      { method: "GET", path: "/v1/admin/queues", auth: "Platform admin", summary: "Current queue depth across the platform.", response: "QueueDepthOut" },
+      { method: "GET", path: "/v1/admin/system-health", auth: "Platform admin", summary: "Platform-wide health snapshot.", response: "SystemHealthOut" },
+      { method: "GET", path: "/v1/admin/billing-overview", auth: "Platform admin", summary: "Platform-wide billing/revenue overview.", response: "BillingOverviewOut" },
+      { method: "GET", path: "/v1/admin/logs", auth: "Platform admin", summary: "Delivery jobs across every organization -- see Global Logs in the dashboard.", response: "Cross-org delivery job list" },
+      { method: "POST", path: "/v1/admin/delivery-jobs/{id}/force-retry", auth: "Platform admin", summary: "Force-retry any organization's delivery job.", response: "ForceActionResponse" },
+      { method: "POST", path: "/v1/admin/delivery-jobs/{id}/force-cancel", auth: "Platform admin", summary: "Force-cancel any organization's delivery job.", response: "ForceActionResponse" },
+      { method: "POST", path: "/v1/admin/feature-flags", auth: "Platform admin", summary: "Create a feature flag.", response: "FeatureFlagOut" },
+      { method: "GET", path: "/v1/admin/feature-flags", auth: "Platform admin", summary: "List feature flags.", response: "FeatureFlagOut[]" },
+      { method: "PATCH", path: "/v1/admin/feature-flags/{key}", auth: "Platform admin", summary: "Update a feature flag.", response: "FeatureFlagOut" },
+      { method: "POST", path: "/v1/admin/feature-flags/{key}/override", auth: "Platform admin", summary: "Override a flag for one organization.", response: "Override confirmation" },
+      { method: "GET", path: "/v1/admin/feature-flags/{key}/overrides", auth: "Platform admin", summary: "List per-organization overrides for a flag.", response: "FeatureFlagOverrideOut[]" },
+      { method: "POST", path: "/v1/admin/abuse-reports", auth: "Platform admin", summary: "File an abuse report against an organization.", response: "AbuseReportOut" },
+      { method: "GET", path: "/v1/admin/abuse-reports", auth: "Platform admin", summary: "List abuse reports.", response: "AbuseReportOut[]" },
+      { method: "PATCH", path: "/v1/admin/abuse-reports/{id}", auth: "Platform admin", summary: "Update an abuse report's status.", response: "AbuseReportOut" },
+    ],
+  },
 ];
 
 function MethodBadge({ method }: { method: Endpoint["method"] }) {
@@ -311,11 +419,8 @@ export default function ApiReferencePage() {
         <h1 className="mt-3 text-4xl font-semibold tracking-tight text-graphite-950 sm:text-5xl dark:text-graphite-50">API Reference</h1>
         <p className="mt-4 max-w-2xl text-[15px] leading-relaxed text-graphite-600 dark:text-graphite-400">
           Every field below is copied from the real Pydantic request/response schemas -- nothing paraphrased from
-          memory. Covers authentication, API keys, organizations, and the core delivery pipeline: Events, Endpoints,
-          Deliveries, Logs, and the DLQ.
-        </p>
-        <p className="mt-3 max-w-2xl text-[13px] text-graphite-500">
-          Not yet covered here: Analytics, Billing, Notifications, Audit, and Admin -- those modules are next.
+          memory. Covers every module: authentication, API keys, organizations, events, endpoints, deliveries, logs,
+          DLQ, analytics, billing, notifications, audit logs, and admin.
         </p>
       </Section>
 
