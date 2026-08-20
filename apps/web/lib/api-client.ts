@@ -66,22 +66,46 @@ interface RequestOptions {
   headers?: Record<string, string>;
 }
 
-async function refreshAccessToken(): Promise<boolean> {
-  const refreshToken = getRefreshToken();
-  if (!refreshToken) return false;
+// All concurrent 401s must share ONE refresh call, not fire one each. The
+// backend rotates refresh tokens on every use (single-use, family+jti
+// tracked) and treats a repeat presentation of an already-rotated token as
+// theft -- revoking the entire session. Pages that fire several parallel
+// requests (several do, via Promise.all) would otherwise each hit 401
+// simultaneously and each call refreshAccessToken() independently: the first
+// call rotates the token, and every other concurrent call then presents the
+// now-stale token, which the backend correctly (from its side) treats as
+// reuse and force-revokes the whole session -- surfacing to the user as
+// being logged out / "token expired" far more often than the token's actual
+// 15-minute lifetime would explain. Deduplicating into a single shared
+// in-flight promise means only one refresh request is ever sent per expiry.
+let inFlightRefresh: Promise<boolean> | null = null;
 
-  const resp = await fetch(`${API_BASE_URL}/v1/auth/refresh`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ refresh_token: refreshToken }),
-  });
-  if (!resp.ok) {
-    clearTokens();
-    return false;
+async function refreshAccessToken(): Promise<boolean> {
+  if (inFlightRefresh) return inFlightRefresh;
+
+  inFlightRefresh = (async () => {
+    const refreshToken = getRefreshToken();
+    if (!refreshToken) return false;
+
+    const resp = await fetch(`${API_BASE_URL}/v1/auth/refresh`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    });
+    if (!resp.ok) {
+      clearTokens();
+      return false;
+    }
+    const data = await resp.json();
+    setTokens(data.access_token, data.refresh_token);
+    return true;
+  })();
+
+  try {
+    return await inFlightRefresh;
+  } finally {
+    inFlightRefresh = null;
   }
-  const data = await resp.json();
-  setTokens(data.access_token, data.refresh_token);
-  return true;
 }
 
 export async function apiFetch<T>(path: string, options: RequestOptions = {}): Promise<T> {
