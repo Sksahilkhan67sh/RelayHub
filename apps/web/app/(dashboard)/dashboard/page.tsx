@@ -6,20 +6,22 @@ import { api, ApiError } from "@/lib/api-client";
 import type { AnalyticsSummary, TimeSeriesBucket, TopEndpoint, UsageSummary } from "@/lib/types";
 import { KpiCard } from "@/components/dashboard/kpi-card";
 import { OnboardingChecklist } from "@/components/dashboard/onboarding-checklist";
+import { DateRangeFilter, resolvePreset, type DateRange } from "@/components/dashboard/date-range-filter";
 import { Card, CardHeader, CardBody } from "@/components/ui/card";
 import { StatusDot } from "@/components/ui/status-dot";
 import { Loader2 } from "lucide-react";
 
-// The dashboard's KPI cards are labeled "today" (e.g. "Deliveries today"), so the
-// underlying analytics calls need to be scoped to today -- the API defaults to
-// all-time totals when start_date/end_date are omitted.
-function getTodayRange(): { start: string; end: string } {
-  const now = new Date();
-  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  return { start: startOfDay.toISOString(), end: now.toISOString() };
+// Buckets by hour read fine over a single day, but blow up into an unreadable
+// wall of points over a week+ window -- switch to daily buckets once the
+// selected range spans more than ~2 days.
+function granularityFor(range: DateRange): "hour" | "day" {
+  if (!range.start || !range.end) return "day"; // "Overall" -- always daily buckets
+  const spanMs = new Date(range.end).getTime() - new Date(range.start).getTime();
+  return spanMs > 2 * 24 * 60 * 60 * 1000 ? "day" : "hour";
 }
 
 export default function DashboardPage() {
+  const [range, setRange] = useState<DateRange>(() => resolvePreset("today"));
   const [summary, setSummary] = useState<AnalyticsSummary | null>(null);
   const [timeSeries, setTimeSeries] = useState<TimeSeriesBucket[]>([]);
   const [topEndpoints, setTopEndpoints] = useState<TopEndpoint[]>([]);
@@ -31,13 +33,22 @@ export default function DashboardPage() {
     let cancelled = false;
 
     async function load() {
+      setLoading(true);
       try {
-        const { start, end } = getTodayRange();
-        const dateParams = `start_date=${encodeURIComponent(start)}&end_date=${encodeURIComponent(end)}`;
+        // "Overall" (and an unset custom range) has null start/end -- omit the
+        // params entirely so the API's own all-time default applies, rather than
+        // sending start_date=null/end_date=null as literal query values.
+        const dateParams =
+          range.start && range.end
+            ? `start_date=${encodeURIComponent(range.start)}&end_date=${encodeURIComponent(range.end)}`
+            : "";
+        const sep = dateParams ? "&" : "";
+        const granularity = granularityFor(range);
+
         const [summaryData, timeSeriesData, topEndpointsData, usageData] = await Promise.all([
-          api.get<AnalyticsSummary>(`/v1/analytics/summary?${dateParams}`),
-          api.get<TimeSeriesBucket[]>(`/v1/analytics/deliveries-over-time?granularity=hour&${dateParams}`),
-          api.get<TopEndpoint[]>(`/v1/analytics/top-endpoints?limit=5&${dateParams}`),
+          api.get<AnalyticsSummary>(`/v1/analytics/summary${dateParams ? `?${dateParams}` : ""}`),
+          api.get<TimeSeriesBucket[]>(`/v1/analytics/deliveries-over-time?granularity=${granularity}${sep}${dateParams}`),
+          api.get<TopEndpoint[]>(`/v1/analytics/top-endpoints?limit=5${sep}${dateParams}`),
           api.get<UsageSummary>("/v1/billing/usage"),
         ]);
         if (cancelled) return;
@@ -57,9 +68,9 @@ export default function DashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [range]);
 
-  if (loading) {
+  if (loading && !summary) {
     return (
       <div className="flex h-64 items-center justify-center">
         <Loader2 className="h-5 w-5 animate-spin text-graphite-400" />
@@ -73,12 +84,21 @@ export default function DashboardPage() {
 
   return (
     <div className="flex flex-col gap-5">
-      <h1 className="text-sm font-semibold text-graphite-950 dark:text-graphite-50">Dashboard</h1>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-sm font-semibold text-graphite-950 dark:text-graphite-50">Dashboard</h1>
+        <DateRangeFilter value={range.preset} onChange={setRange} />
+      </div>
 
       <OnboardingChecklist />
 
+      {loading && (
+        <div className="flex items-center gap-1.5 text-xs text-graphite-500">
+          <Loader2 className="h-3 w-3 animate-spin" /> Updating for {range.label}…
+        </div>
+      )}
+
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <KpiCard label="Deliveries today" value={summary?.total_deliveries ?? 0} />
+        <KpiCard label={`Overall deliveries (${range.label})`} value={summary?.total_deliveries ?? 0} />
         <KpiCard label="Successful deliveries" value={summary?.success_count ?? 0} tone="green" />
         <KpiCard
           label="Success rate"
@@ -96,7 +116,9 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <CardHeader>
-            <h2 className="text-xs font-medium text-graphite-700 dark:text-graphite-200">Deliveries per hour</h2>
+            <h2 className="text-xs font-medium text-graphite-700 dark:text-graphite-200">
+              Deliveries {granularityFor(range) === "hour" ? "per hour" : "per day"} — {range.label}
+            </h2>
           </CardHeader>
           <CardBody>
             {timeSeries.length === 0 ? (
@@ -147,11 +169,11 @@ export default function DashboardPage() {
 
       <Card>
         <CardHeader>
-          <h2 className="text-xs font-medium text-graphite-700 dark:text-graphite-200">Top endpoints</h2>
+          <h2 className="text-xs font-medium text-graphite-700 dark:text-graphite-200">Top endpoints — {range.label}</h2>
         </CardHeader>
         <CardBody className="p-0">
           {topEndpoints.length === 0 ? (
-            <div className="p-6 text-center text-xs text-graphite-500">No deliveries yet.</div>
+            <div className="p-6 text-center text-xs text-graphite-500">No deliveries in this window.</div>
           ) : (
             <table className="w-full text-left text-xs">
               <thead>
