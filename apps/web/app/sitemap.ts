@@ -16,6 +16,8 @@ const STATIC_ROUTES = [
   "/developers/replay",
   "/developers/troubleshooting",
   "/developers/api",
+  "/developers/sdks",
+  "/developers/cli",
   "/pricing",
   "/docs",
   "/about",
