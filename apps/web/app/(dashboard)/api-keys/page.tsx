@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, type FormEvent } from "react";
-import { KeyRound, Plus, Copy, Check, RotateCw, Ban } from "lucide-react";
+import { KeyRound, Plus, Copy, Check, RotateCw, Ban, PartyPopper } from "lucide-react";
 import { api, ApiError } from "@/lib/api-client";
 import type { ApiKeyOut, ApiKeyCreatedOut, ApiKeyEnvironment } from "@/lib/types";
 import { API_KEY_SCOPES } from "@/lib/types";
@@ -9,15 +9,23 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, Badge } from "@/components/ui/card";
 import { Modal } from "@/components/ui/modal";
+import { Confetti } from "@/components/ui/confetti";
 import { EmptyState } from "@/components/ui/empty-state";
 import { TableSkeleton } from "@/components/ui/skeleton";
 import { StatusDot } from "@/components/ui/status-dot";
+
+interface RevealedSecret {
+  key: ApiKeyCreatedOut;
+  /** True only right after Create (not Rotate) -- gates the confetti/congrats
+   * treatment so routine credential rotation doesn't get a celebration. */
+  justCreated: boolean;
+}
 
 export default function ApiKeysPage() {
   const [keys, setKeys] = useState<ApiKeyOut[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
-  const [revealSecret, setRevealSecret] = useState<ApiKeyCreatedOut | null>(null);
+  const [revealSecret, setRevealSecret] = useState<RevealedSecret | null>(null);
 
   async function load() {
     try {
@@ -46,7 +54,7 @@ export default function ApiKeysPage() {
     if (!confirm("Rotate this key? The old secret will stop working immediately and a new one will be shown once.")) return;
     try {
       const rotated = await api.post<ApiKeyCreatedOut>(`/v1/api-keys/${id}/rotate`);
-      setRevealSecret(rotated);
+      setRevealSecret({ key: rotated, justCreated: false });
       await load();
     } catch (err) {
       alert(err instanceof ApiError ? err.message : "Failed to rotate key");
@@ -143,7 +151,7 @@ export default function ApiKeysPage() {
         onClose={() => setCreateOpen(false)}
         onCreated={(created) => {
           setCreateOpen(false);
-          setRevealSecret(created);
+          setRevealSecret({ key: created, justCreated: true });
           load();
         }}
       />
@@ -248,26 +256,40 @@ function CreateApiKeyModal({
   );
 }
 
-function RevealSecretModal({ secret, onClose }: { secret: ApiKeyCreatedOut | null; onClose: () => void }) {
+function RevealSecretModal({ secret, onClose }: { secret: RevealedSecret | null; onClose: () => void }) {
   const [copied, setCopied] = useState(false);
 
   async function handleCopy() {
     if (!secret) return;
-    await navigator.clipboard.writeText(secret.key);
+    await navigator.clipboard.writeText(secret.key.key);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   }
 
   return (
-    <Modal open={!!secret} onClose={onClose} title="API key created">
+    <Modal open={!!secret} onClose={onClose} title={secret?.justCreated ? "🎉 Key created" : "API key created"}>
       {secret && (
-        <div className="flex flex-col gap-3">
+        <div className="relative flex flex-col gap-3">
+          {secret.justCreated && <Confetti />}
+
+          {secret.justCreated && (
+            <div
+              className="flex items-center gap-2 rounded-md border border-signal-green/30 bg-signal-green-soft px-3 py-2"
+              style={{ animation: "congrats-pop 350ms ease-out both" }}
+            >
+              <PartyPopper className="h-4 w-4 shrink-0 text-signal-green" />
+              <p className="text-xs font-medium text-[#0F5E3F]">
+                Congratulations! Your new API key is ready to use.
+              </p>
+            </div>
+          )}
+
           <p className="text-xs text-signal-red">
             This is the only time the full key will be shown. Copy it now and store it securely.
           </p>
           <div className="flex items-center gap-2 rounded border border-graphite-200 bg-graphite-50 px-3 py-2 dark:border-graphite-700 dark:bg-graphite-800">
             <code className="flex-1 overflow-x-auto whitespace-nowrap font-mono text-xs text-graphite-950 dark:text-graphite-50">
-              {secret.key}
+              {secret.key.key}
             </code>
             <button onClick={handleCopy} className="shrink-0 rounded p-1 text-graphite-500 hover:bg-graphite-200 dark:hover:bg-graphite-700">
               {copied ? <Check className="h-3.5 w-3.5 text-signal-green" /> : <Copy className="h-3.5 w-3.5" />}
