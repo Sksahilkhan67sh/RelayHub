@@ -116,8 +116,6 @@ final class Transport {
 
         RelayHubException lastError = null;
         for (int attempt = 0; attempt <= retries; attempt++) {
-            if (attempt > 0) sleep(backoffMillis(attempt));
-
             HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(url))
                     .timeout(effectiveTimeout)
                     // See the matching comment in the Node SDK's transport.ts -- the backend's
@@ -140,7 +138,7 @@ final class Transport {
                 response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
             } catch (IOException | InterruptedException e) {
                 lastError = new RelayHubException.ConnectionException("Request to " + path + " failed: " + e.getMessage(), e);
-                if (attempt < retries) continue;
+                if (attempt < retries) { sleep(backoffMillis(attempt + 1)); continue; }
                 throw lastError;
             }
 
@@ -156,7 +154,10 @@ final class Transport {
             }
 
             if (RETRYABLE_STATUS.contains(status) && attempt < retries) {
-                if (retryAfterSeconds != null) sleep((long) (retryAfterSeconds * 1000));
+                // Retry-After, when the server sends it, REPLACES our own exponential
+                // backoff for this wait -- it should never stack with it. Falling back
+                // to backoff only when the server didn't tell us how long to wait.
+                sleep(retryAfterSeconds != null ? (long) (retryAfterSeconds * 1000) : backoffMillis(attempt + 1));
                 continue;
             }
 
