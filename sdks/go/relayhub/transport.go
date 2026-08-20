@@ -109,10 +109,6 @@ func (t *transport) do(ctx context.Context, method, path string, body any, opts 
 
 	var lastErr error
 	for attempt := 0; attempt <= maxRetries; attempt++ {
-		if attempt > 0 {
-			time.Sleep(backoff(attempt))
-		}
-
 		callCtx, cancel := context.WithTimeout(ctx, timeout)
 		req, err := http.NewRequestWithContext(callCtx, method, fullURL, bytes.NewReader(bodyBytes))
 		if err != nil {
@@ -138,6 +134,7 @@ func (t *transport) do(ctx context.Context, method, path string, body any, opts 
 		if err != nil {
 			lastErr = &Error{Message: fmt.Sprintf("request to %s failed: %v", path, err), Status: 0}
 			if attempt < maxRetries {
+				time.Sleep(backoff(attempt + 1))
 				continue
 			}
 			return nil, lastErr
@@ -148,6 +145,7 @@ func (t *transport) do(ctx context.Context, method, path string, body any, opts 
 		if readErr != nil {
 			lastErr = &Error{Message: fmt.Sprintf("failed to read response from %s: %v", path, readErr), Status: 0}
 			if attempt < maxRetries {
+				time.Sleep(backoff(attempt + 1))
 				continue
 			}
 			return nil, lastErr
@@ -164,8 +162,13 @@ func (t *transport) do(ctx context.Context, method, path string, body any, opts 
 		retryAfterSecs, hasRetryAfter := parseRetryAfter(resp.Header.Get("Retry-After"))
 
 		if retryableStatus[resp.StatusCode] && attempt < maxRetries {
+			// Retry-After, when the server sends it, REPLACES our own exponential
+			// backoff for this wait -- it should never stack with it. Falling back
+			// to backoff only when the server didn't tell us how long to wait.
 			if hasRetryAfter {
 				time.Sleep(time.Duration(retryAfterSecs * float64(time.Second)))
+			} else {
+				time.Sleep(backoff(attempt + 1))
 			}
 			continue
 		}
