@@ -50,3 +50,28 @@ class AbuseReport(Base, UUIDPKMixin, TimestampMixin):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default=AbuseReportStatus.OPEN.value)
     resolution_notes: Mapped[str | None] = mapped_column(String(2000), nullable=True)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class WorkerHeartbeat(Base, UUIDPKMixin, TimestampMixin):
+    """
+    Phase 2 reliability addition. Prior to this, admin/service.py's system-health
+    endpoint honestly reported that worker liveness was "not tracked" rather than
+    fabricating data -- this table is the real thing it was waiting on.
+
+    One row per live Celery worker process, upserted by a background heartbeat loop
+    started from `worker_process_init` (see app/workers/celery_app.py) and read by
+    `get_system_health`/`get_worker_health` to report actual worker liveness instead
+    of a time-based inference over DeliveryJob rows. `worker_id` (hostname-pid) is
+    the natural key -- a worker restarting under the same identity overwrites its
+    own stale row rather than accumulating dead entries, and a genuinely-gone
+    worker's row simply stops updating, which is exactly what "unhealthy" should
+    mean here.
+    """
+
+    __tablename__ = "worker_heartbeats"
+
+    worker_id: Mapped[str] = mapped_column(String(200), nullable=False, unique=True, index=True)
+    hostname: Mapped[str] = mapped_column(String(200), nullable=False)
+    pid: Mapped[int] = mapped_column(nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_heartbeat_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
