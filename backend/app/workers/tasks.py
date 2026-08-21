@@ -81,3 +81,27 @@ async def _run_cleanup_expired_delivery_logs() -> None:
 @celery_app.task(name="cleanup_expired_delivery_logs")
 def cleanup_expired_delivery_logs_task() -> None:
     asyncio.run(_run_cleanup_expired_delivery_logs())
+
+
+async def _run_reconcile_stuck_jobs() -> None:
+    from app.common.queue_client import get_queue_client
+    from app.modules.retry.reconciliation import reconcile_stuck_jobs
+
+    engine = create_async_engine(settings.DATABASE_URL, pool_pre_ping=True)
+    session_maker = async_sessionmaker(bind=engine, expire_on_commit=False)
+
+    async with session_maker() as db:
+        result = await reconcile_stuck_jobs(db, queue_client=get_queue_client())
+        if result.total_requeued:
+            logger.warning(
+                "reconciliation: recovered_stuck_processing=%d requeued_stale_queued=%d requeued_missed_retries=%d",
+                len(result.recovered_stuck_processing),
+                len(result.requeued_stale_queued),
+                len(result.requeued_missed_retries),
+            )
+    await engine.dispose()
+
+
+@celery_app.task(name="reconcile_stuck_jobs")
+def reconcile_stuck_jobs_task() -> None:
+    asyncio.run(_run_reconcile_stuck_jobs())
