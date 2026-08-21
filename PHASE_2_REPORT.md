@@ -145,12 +145,10 @@ tick under load doesn't false-flag a healthy worker). `get_system_health` now
 returns real `worker_health` data instead of omitting the field.
 
 This closes the "no worker heartbeat table" gap from the original report's
-Remaining Risks — but it's fleet-level liveness ("is this worker process alive at
-all"), not a per-job lease. `reconcile_stuck_jobs`' stuck-job detection (problem #1)
-still uses the `DeliveryJob.updated_at` time heuristic, not this table — tying a
-specific in-flight job to the specific worker holding it would need the executor to
-record `worker_id`/`claimed_at` on the job at claim time, which wasn't done this
-pass (see Remaining Risks).
+Remaining Risks — but at the time it was fleet-level liveness only ("is this worker
+process alive at all"), not a per-job lease. **Closed in a further follow-up (see
+Problem #7 below):** `reconcile_stuck_jobs` now ties a specific in-flight job to the
+specific worker holding it.
 
 Also closed: the "DLQ concurrent-double-retry" test noted as missing in the
 original report. `test_double_retry_of_same_dlq_job_is_safe` verifies that a second
@@ -159,25 +157,77 @@ retry of an already-retried job is safely rejected (404, since
 the job's attempt history a second time — confirming `dlq/service.py`'s existing
 filter-based approach is safe without needing any new locking.
 
+### 7. Follow-up — a real per-job lease, not just fleet-level liveness
+
+**Background:** Problem #6 gave `reconcile_stuck_jobs` a way to know whether *any*
+workers were alive, but not whether the *specific* worker holding a given stuck job
+was alive — the stuck-processing check still relied purely on
+`DeliveryJob.updated_at` and a fixed 10-minute wait, exactly as before Problem #6.
+
+**Fix:** two new nullable columns on `DeliveryJob` — `claimed_by_worker_id`,
+`claimed_at` (migration `0015`) — populated by `_claim_job`
+(`delivery/executor.py`) at the same CAS-claim commit that already flips status to
+`processing`. `reconcile_stuck_jobs`' new `_find_stuck_processing_job_ids` helper
+now checks, for each job stuck in `processing`, whether its claiming worker has a
+heartbeat row:
+- **Worker confirmed alive** (fresh heartbeat) → never recovered on elapsed time
+  alone, however long it's been — a live worker means real work may still be
+  happening, and recovering the job anyway would risk a duplicate concurrent
+  delivery attempt, which is exactly what a lease exists to prevent.
+- **Worker confirmed dead** (heartbeat stale past `LEASE_WORKER_STALE_AFTER`, 90s)
+  → recovered *immediately*, without waiting out the old 10-minute window. This is
+  the actual value of a real lease over a time heuristic: much faster recovery when
+  the failure is real, not just "eventually recovers either way."
+- **No usable lease** (job claimed before this migration, or a `claimed_by_worker_id`
+  with zero rows in `worker_heartbeats`) → falls back to the original
+  `STUCK_PROCESSING_AFTER` time heuristic, unchanged from before.
+
+A small `LEASE_GRACE_PERIOD` (30s) covers the narrow window right after a claim,
+before that worker's first heartbeat write has necessarily landed, so a job isn't
+misjudged as lease-covered-but-dead in the first moment after being claimed.
+
+One correctness detail worth calling out: the `worker_id` written by the heartbeat
+loop (`celery_app.py`) and the `worker_id` passed to `_claim_job` (via
+`tasks.py`) previously used two independently-written derivations
+(`socket.gethostname()` vs. `os.uname().nodename`) that agree on typical Linux
+hosts but weren't guaranteed to. A mismatch here would have silently broken the
+lease (a claimed job's `claimed_by_worker_id` would never match any
+`worker_heartbeats` row, silently degrading every job to the time-heuristic
+fallback with no error surfaced). Extracted both into one shared
+`app/workers/identity.get_worker_id()` so they're structurally guaranteed to agree.
+
+Regression tests: `test_claim_records_worker_lease` (the lease fields are actually
+populated on claim), `test_reconciliation_lease_overrides_time_heuristic_when_worker_alive`
+(a job stuck for 30 minutes — 3x past the time heuristic — is correctly left alone
+because its worker is still heartbeating), `test_reconciliation_lease_recovers_job_fast_when_worker_confirmed_dead`
+(a job stuck for only 2 minutes — nowhere near the 10-minute heuristic — is
+recovered immediately because its worker's heartbeat is confirmed stale), and
+`test_reconciliation_falls_back_to_time_heuristic_when_worker_has_no_heartbeat_history`
+(a job whose worker has zero heartbeat rows correctly falls back to the original
+behavior rather than being treated as either confirmed-alive or confirmed-dead).
+
 ## Database
 
-Migration `0014_worker_heartbeats.py` adds one new table (`worker_heartbeats`) —
-additive only, no changes to existing tables, no backfill needed. Could not run
-`alembic upgrade head` against a real Postgres in this sandbox (no Postgres
-instance available here, same limitation as the missing git repo noted in the
-original report) — the migration was verified by import/structural check and by
-matching the exact column-definition pattern of migrations `0001`–`0013`, and the
-corresponding SQLAlchemy model was exercised indirectly through the full test suite
-(which uses SQLite `create_all`, not this migration file, to build its schema).
-Recommend running `alembic upgrade head` against a real Postgres instance as part
-of your own deploy process before relying on this.
+Two migrations this phase, both additive-only (no changes to existing columns, no
+backfill needed):
+- `0014_worker_heartbeats.py` — new `worker_heartbeats` table.
+- `0015_delivery_job_claim_lease.py` — two new nullable columns on `delivery_jobs`
+  (`claimed_by_worker_id`, `claimed_at`) plus an index on the former.
 
-No schema changes beyond that. `reconcile_stuck_jobs` (problem #1) still reuses the existing
-`DeliveryJob.updated_at` column (already auto-bumped by `TimestampMixin`'s
-`onupdate=func.now()` on every status-changing UPDATE, including the CAS claim) as
-the staleness signal, rather than adding a new lease/heartbeat column — kept the
-change minimal per the "do not invent architecture" rule. Documented above that this
-is a heuristic, not a real lease.
+Neither could be run against a real Postgres in this sandbox (no Postgres instance
+available here, same limitation as the missing git repo noted in the original
+report) — both were verified by import/structural check and by matching the exact
+column-definition pattern of migrations `0001`–`0013`, and the corresponding
+SQLAlchemy model changes were exercised indirectly through the full test suite
+(which uses SQLite `create_all`, not these migration files, to build its schema).
+Recommend running `alembic upgrade head` against a real Postgres instance, and
+ideally exercising `downgrade` then `upgrade` again for both, as part of your own
+deploy process before relying on this.
+
+`reconcile_stuck_jobs`' stuck-processing detection (problem #1) now checks the new
+lease columns first and only falls back to the `DeliveryJob.updated_at` time
+heuristic (already auto-bumped by `TimestampMixin`'s `onupdate=func.now()`) when no
+usable lease signal exists — see Problem #7 above for the full detection logic.
 
 ## Queue
 
@@ -190,11 +240,11 @@ is a heuristic, not a real lease.
 ## Workers
 
 Fixed the specific `task_acks_late` + CAS-claim interaction that left crashed
-workers' jobs permanently stuck (see Problem #1). **Also added this round:** a real
+workers' jobs permanently stuck (see Problem #1). **Also added:** a real
 worker heartbeat/health table — see Problem #6 above and the Workers / Admin
-section below. `reconcile_stuck_jobs`' own stuck-*job* detection still uses the
-time-based `updated_at` heuristic, not the new heartbeat table (see Remaining
-Risks) — the two are complementary, not yet unified.
+section below. **Now unified** (Problem #7): `reconcile_stuck_jobs`' stuck-*job*
+detection checks the specific claiming worker's heartbeat first, falling back to
+the `updated_at` time heuristic only when no lease signal is available.
 
 ## Retry
 
@@ -296,6 +346,10 @@ Tested directly, with real (not simulated-in-prose) code:
 | Duplicate/concurrent DLQ retry of the same job | **PASS** — `test_double_retry_of_same_dlq_job_is_safe`: second retry rejected, exactly one dispatch, attempt history reset exactly once |
 | Worker heartbeat reporting (fresh vs. stale) | **PASS** — `test_system_health_reports_worker_heartbeats` |
 | Worker re-heartbeating under the same identity doesn't duplicate its row | **PASS** — `test_worker_heartbeat_upsert_updates_existing_row_not_duplicates` |
+| Lease fields populated at claim time | **PASS** — `test_claim_records_worker_lease` |
+| Stuck-looking job left alone because its worker is confirmed alive (30 min stuck, 3x past the time heuristic) | **PASS** — `test_reconciliation_lease_overrides_time_heuristic_when_worker_alive` |
+| Stuck job recovered fast because its worker is confirmed dead (2 min stuck, nowhere near the time heuristic) | **PASS** — `test_reconciliation_lease_recovers_job_fast_when_worker_confirmed_dead` |
+| Lease correctly falls back to time heuristic when the claiming worker has no heartbeat history | **PASS** — `test_reconciliation_falls_back_to_time_heuristic_when_worker_has_no_heartbeat_history` |
 | Redis fully unavailable for an extended period (not just one call) | **Not tested** — see Remaining Risks |
 | Database connection pool exhaustion | **Not tested** — see Remaining Risks |
 | Large queue backlog / load test | **Not tested** — see Remaining Risks |
@@ -303,8 +357,9 @@ Tested directly, with real (not simulated-in-prose) code:
 ## Tests
 
 ```
-Full backend suite: 252/252 passing (238 original baseline + 14 new)
-  - New: tests/integration/test_reconciliation.py (6 tests)
+Full backend suite: 256/256 passing (238 original baseline + 18 new)
+  - New: tests/integration/test_reconciliation.py (10 tests total: 6 from the
+    initial reconciliation work + 4 lease-specific tests this round)
   - New: 2 tests added to tests/integration/test_events.py / test_retry_engine.py
     (queue-dispatch-failure resilience in publish_event and enqueue_due_retries)
   - New: 3 tests added across test_dlq.py / test_admin.py (queue-dispatch-failure
@@ -317,32 +372,33 @@ Full backend suite: 252/252 passing (238 original baseline + 14 new)
 ## Verification
 
 ```
-Typecheck (mypy app/):        PASS — 0 issues, 110 files
+Typecheck (mypy app/):        PASS — 0 issues, 111 files
 Lint (ruff, files touched):   PASS — 0 issues in every app/ and tests/ file modified
-                               across both rounds of this phase. Migration
-                               0014_worker_heartbeats.py carries the same
+                               across all three rounds of this phase. Both new
+                               migration files (0014, 0015) carry the same
                                import-ordering style finding (I001) present in
                                EVERY existing migration file 0001-0013 — confirmed
                                by running ruff against the full alembic/ directory
-                               (15 findings across 14 files, one per migration) —
-                               left as-is to stay consistent with the established
+                               — left as-is to stay consistent with the established
                                convention rather than fixing it in isolation on the
-                               one new file.
+                               new files only.
 Lint (ruff, full app+tests):  7 pre-existing findings in app/+tests/, all in files
                                NOT touched this phase (test_admin.py's own
                                pre-existing unused-import findings, test_alerts.py,
                                test_delivery_executor.py, test_delivery_logs.py) —
                                confirmed identical to the very first baseline lint
                                run before any changes; nothing new introduced.
-                               Separately, 15 pre-existing findings across
-                               alembic/versions/ (see above) — same story.
-Full test suite:              PASS — 252/252
-Migration:                    Added 0014_worker_heartbeats.py this round (additive
-                               only, one new table) — could not run `alembic
-                               upgrade head` against a real Postgres in this
-                               sandbox (none available); verified structurally
-                               instead (see Database section above). Recommend
-                               running it for real as part of your deploy process.
+                               Separately, pre-existing findings across every file
+                               in alembic/versions/ (see above) — same story.
+Full test suite:              PASS — 256/256
+Migration:                    Two additive migrations this phase overall:
+                               0014_worker_heartbeats.py and
+                               0015_delivery_job_claim_lease.py. Neither could be
+                               run against a real Postgres in this sandbox (none
+                               available); both verified structurally instead (see
+                               Database section above). Recommend running both for
+                               real, including a downgrade/upgrade round-trip, as
+                               part of your deploy process.
 Production build:             Not re-run (frontend untouched this phase; backend has
                                no separate "build" step beyond the test/lint/typecheck
                                above)
@@ -352,7 +408,15 @@ Production build:             Not re-run (frontend untouched this phase; backend
 
 Being direct, as instructed — this is not a zero-risk system after this pass:
 
-1. **Stuck-*job* detection is still a time heuristic, not a true per-job lease**,
+1. ~~Stuck-*job* detection is still a time heuristic, not a true per-job lease.~~
+   **Fixed** — `DeliveryJob.claimed_by_worker_id`/`claimed_at` (migration `0015`)
+   plus `reconcile_stuck_jobs`' new lease-aware detection now ties a stuck job to
+   its specific claiming worker's heartbeat, recovering confirmed-dead workers'
+   jobs immediately rather than waiting out a fixed time window, and never
+   recovering a job whose worker is confirmed alive regardless of elapsed time.
+   The original time heuristic remains as the fallback for jobs with no lease
+   signal (pre-migration rows, or a worker with zero heartbeat history) — see
+   Problem #7 above for the full design and its tests.
    even though worker-*fleet* liveness (item 3, below) is now real. The new
    `worker_heartbeats` table proves a given worker process is alive, but
    `reconcile_stuck_jobs` doesn't yet cross-reference it — `DeliveryJob` doesn't
@@ -372,8 +436,8 @@ Being direct, as instructed — this is not a zero-risk system after this pass:
 3. ~~No worker heartbeat / fleet health table.~~ **Fixed** — `worker_heartbeats`
    table + migration `0014`, populated by a background thread each real Celery
    worker process starts via `worker_process_init`, surfaced through
-   `get_system_health`'s new `worker_health` field. See item 1 above for what this
-   does *not* yet cover (per-job lease).
+   `get_system_health`'s new `worker_health` field, and (as of item 1 above) also
+   consumed directly by `reconcile_stuck_jobs` for per-job lease checks.
 4. **No metrics/tracing export.** Structured logging exists and now covers the new
    reconciliation/dispatch-failure paths; there's no Prometheus/OTel wiring, despite
    `OTEL_EXPORTER_OTLP_ENDPOINT` existing as a config placeholder from an earlier
@@ -385,19 +449,24 @@ Being direct, as instructed — this is not a zero-risk system after this pass:
    exercised), DB connection pool exhaustion, large-backlog/load behavior, retry
    storm / concurrency-pressure protection under real load (the retry schedule's
    jitter exists and was audited, but no test drives actual concurrent volume
-   through it).
+   through it). Also not tested: the lease mechanism's own edge cases under real
+   concurrency (e.g. a worker's heartbeat thread stalling independently of the
+   worker's ability to still process jobs — the two are separate threads in the
+   same process, and a hang specific to the heartbeat thread alone, leaving task
+   processing unaffected, could in theory cause a false "dead" verdict; considered
+   unlikely given how simple the heartbeat loop is, but not proven with a test).
 7. **No git repository in the uploaded archive**, so the "create a Git checkpoint
    before modifying production-facing behavior" step from the phase brief could not
    be performed as a real commit — noting this rather than silently skipping it.
    Recommend the person track this change through their normal git workflow via a
    diff/PR from these files rather than treating this as a substitute for one.
-8. **The new migration was not run against a real database.** No Postgres instance
-   was available in this sandbox. The migration file was checked structurally
-   (imports cleanly, matches the exact column-definition pattern of every prior
-   migration) and the corresponding model was exercised through the full test suite
-   — but that suite runs against SQLite via `create_all`, which does not go through
-   Alembic at all. Run `alembic upgrade head` (and ideally `downgrade` then
-   `upgrade` again) against a real Postgres instance before deploying this.
+8. **Neither new migration was run against a real database.** No Postgres instance
+   was available in this sandbox. Both migration files were checked structurally
+   (import cleanly, match the exact column-definition pattern of every prior
+   migration) and the corresponding model changes were exercised through the full
+   test suite — but that suite runs against SQLite via `create_all`, which does not
+   go through Alembic at all. Run `alembic upgrade head` (and ideally `downgrade`
+   then `upgrade` again) against a real Postgres instance before deploying this.
 
 **Not claiming:** "100% failure-proof," "zero risk," or that all 28 sections of the
 brief were exhaustively implemented. What's true: the one critical silent-loss bug
