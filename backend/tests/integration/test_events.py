@@ -1,3 +1,5 @@
+import uuid
+
 import pytest
 
 from tests.conftest import create_api_key, create_endpoint, register_and_get_token
@@ -249,6 +251,40 @@ async def test_client_supplied_request_id_is_echoed_back(client, unique_email):
 
 
 @pytest.mark.asyncio
+@pytest.mark.asyncio
+async def test_publish_survives_queue_dispatch_failure(client, unique_email, db_session):
+    """
+    Regression test for a real bug: previously, a broker/Redis outage during the
+    post-commit `queue_client.enqueue()` call would propagate as an unhandled
+    exception, turning an already-durably-persisted publish into a 500 -- even
+    though the event and DeliveryJob rows were safely committed. The event must be
+    accepted (202-equivalent success), the row must exist, and it must remain in
+    `queued` status for reconciliation to pick up -- not silently disappear and not
+    falsely fail the request that actually succeeded.
+    """
+    token = await register_and_get_token(client, unique_email)
+    await create_endpoint(client, token)
+    api_key = await create_api_key(client, token)
+
+    async def _broken_enqueue(job_id):
+        raise ConnectionError("simulated broker outage")
+
+    client.fake_queue.enqueue = _broken_enqueue  # type: ignore[method-assign]
+
+    resp = await client.post(
+        "/v1/events", json={"event": "payment.success", "payload": {}}, headers={"X-RelayHub-Api-Key": api_key}
+    )
+    assert resp.status_code == 201, resp.text
+    job_id = uuid.UUID(resp.json()["delivery_jobs"][0]["id"])
+
+    from sqlalchemy import select
+
+    from app.modules.delivery.models import DeliveryJob, DeliveryJobStatus
+
+    job = (await db_session.execute(select(DeliveryJob).where(DeliveryJob.id == job_id))).scalar_one()
+    assert job.status == DeliveryJobStatus.QUEUED.value
+
+
 async def test_404_error_uses_standardized_envelope(client, unique_email):
     token = await register_and_get_token(client, unique_email)
     import uuid
