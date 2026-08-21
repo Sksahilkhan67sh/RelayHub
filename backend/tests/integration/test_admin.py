@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import httpx
 import pytest
@@ -137,6 +138,65 @@ async def test_system_health_reports_db_ok_and_queue_depth(client, unique_email,
     body = resp.json()
     assert body["database_ok"] is True
     assert "queue_depth" in body
+    assert body["worker_health"] == {"healthy_count": 0, "unhealthy_count": 0, "workers": []}
+
+
+@pytest.mark.asyncio
+async def test_system_health_reports_worker_heartbeats(client, unique_email, db_session):
+    """
+    Regression test for the worker-heartbeat table: a fresh heartbeat is reported
+    healthy, and a heartbeat older than WORKER_HEARTBEAT_STALE_AFTER is reported
+    unhealthy -- proving get_system_health reads real data, not a placeholder.
+    """
+    from app.modules.admin import service as admin_service
+
+    token = await register_and_get_token(client, unique_email)
+    await make_platform_admin(client, db_session, token)
+
+    now = datetime.now(timezone.utc)
+    await admin_service.upsert_worker_heartbeat(
+        db_session, worker_id="host-a-111", hostname="host-a", pid=111, now=now
+    )
+    await admin_service.upsert_worker_heartbeat(
+        db_session, worker_id="host-b-222", hostname="host-b", pid=222, now=now - timedelta(minutes=10)
+    )
+
+    resp = await client.get("/v1/admin/system-health", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 200
+    worker_health = resp.json()["worker_health"]
+    assert worker_health["healthy_count"] == 1
+    assert worker_health["unhealthy_count"] == 1
+    by_id = {w["worker_id"]: w for w in worker_health["workers"]}
+    assert by_id["host-a-111"]["healthy"] is True
+    assert by_id["host-b-222"]["healthy"] is False
+
+
+@pytest.mark.asyncio
+async def test_worker_heartbeat_upsert_updates_existing_row_not_duplicates(client, unique_email, db_session):
+    """A worker process re-heartbeating under the same worker_id updates its row in place."""
+    from sqlalchemy import func, select
+
+    from app.modules.admin import service as admin_service
+    from app.modules.admin.models import WorkerHeartbeat
+
+    first = datetime.now(timezone.utc) - timedelta(seconds=30)
+    second = datetime.now(timezone.utc)
+
+    await admin_service.upsert_worker_heartbeat(db_session, worker_id="host-a-111", hostname="host-a", pid=111, now=first)
+    await admin_service.upsert_worker_heartbeat(db_session, worker_id="host-a-111", hostname="host-a", pid=111, now=second)
+
+    count = (
+        await db_session.execute(select(func.count(WorkerHeartbeat.id)).where(WorkerHeartbeat.worker_id == "host-a-111"))
+    ).scalar_one()
+    assert count == 1
+
+    row = (
+        await db_session.execute(select(WorkerHeartbeat).where(WorkerHeartbeat.worker_id == "host-a-111"))
+    ).scalar_one()
+    # SQLite (used by the test DB) doesn't round-trip tzinfo on DateTime columns, so
+    # compare naively-normalized values rather than exact tz-aware equality.
+    stored = row.last_heartbeat_at.replace(tzinfo=timezone.utc) if row.last_heartbeat_at.tzinfo is None else row.last_heartbeat_at
+    assert abs((stored - second).total_seconds()) < 1
 
 
 @pytest.mark.asyncio
