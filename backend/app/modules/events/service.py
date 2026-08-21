@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timezone
 
@@ -14,6 +15,8 @@ from app.modules.delivery.models import DeliveryJob, DeliveryJobStatus
 from app.modules.endpoints.models import Endpoint
 from app.modules.events.models import BUILT_IN_EVENT_TYPES, Event, EventType
 from app.modules.events.schemas import PublishEventRequest
+
+logger = logging.getLogger(__name__)
 
 
 async def _ensure_event_type_registered(db: AsyncSession, *, organization_id: uuid.UUID, event_type: str) -> None:
@@ -145,8 +148,26 @@ async def publish_event(
 
     # Notify the queue AFTER commit -- never enqueue a job whose row might not
     # actually exist if the transaction were to fail.
+    #
+    # Reliability fix: the event + DeliveryJob rows above are already durably
+    # committed at this point -- that part can't fail silently. But until this fix,
+    # a broker/Redis outage during THIS enqueue call would raise past the caller,
+    # turning a successfully-persisted publish into a 500 the customer would
+    # reasonably read as "the event was never accepted" and might re-publish
+    # (masking, not preventing, the real gap). The job is not lost -- it's sitting
+    # in the DB with status=queued -- but nothing would dispatch it until an
+    # operator noticed and manually intervened. Catch broker failures here, log
+    # them, and let `reconcile_stuck_jobs` (runs every 60s) pick up the row from
+    # its durable `queued` state and retry the dispatch instead.
     for job in jobs:
-        await queue_client.enqueue(job.id)
+        try:
+            await queue_client.enqueue(job.id)
+        except Exception:  # noqa: BLE001 - broker outage must not fail an already-durable publish
+            logger.exception(
+                "queue dispatch failed for delivery_job=%s (event=%s) -- job remains queued in the "
+                "database and will be picked up by reconciliation",
+                job.id, event.id,
+            )
 
     if jobs:
         await _maybe_trigger_queue_full_alert(db, organization_id=organization_id)
