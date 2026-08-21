@@ -8,7 +8,13 @@ from fastapi import HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.admin.models import AbuseReport, AbuseReportStatus, FeatureFlag, FeatureFlagOverride
+from app.modules.admin.models import (
+    AbuseReport,
+    AbuseReportStatus,
+    FeatureFlag,
+    FeatureFlagOverride,
+    WorkerHeartbeat,
+)
 from app.modules.audit import service as audit_service
 from app.modules.audit.models import AuditAction
 from app.modules.auth.models import Membership, Organization, Role, User
@@ -168,14 +174,75 @@ async def get_queue_depth(db: AsyncSession) -> dict:
     }
 
 
+# A worker whose heartbeat is older than this is considered unhealthy/gone -- a few
+# multiples of the heartbeat write interval (HEARTBEAT_INTERVAL_SECONDS in
+# app/workers/celery_app.py) so a single missed tick under load doesn't flip a
+# healthy worker to "unhealthy".
+WORKER_HEARTBEAT_STALE_AFTER = timedelta(seconds=90)
+
+
+async def upsert_worker_heartbeat(
+    db: AsyncSession, *, worker_id: str, hostname: str, pid: int, now: datetime | None = None
+) -> None:
+    """
+    Called by the heartbeat loop each worker process runs in the background (see
+    app/workers/celery_app.py's `worker_process_init` handler). `worker_id`
+    (hostname-pid) is the natural key: a worker process that dies and restarts
+    under the same identity just overwrites its own row rather than accumulating
+    stale entries, and a process that's actually gone simply stops updating its row
+    -- which is exactly the signal `get_worker_health` needs.
+    """
+    now = now or datetime.now(timezone.utc)
+    existing = (
+        await db.execute(select(WorkerHeartbeat).where(WorkerHeartbeat.worker_id == worker_id))
+    ).scalar_one_or_none()
+    if existing:
+        existing.last_heartbeat_at = now
+    else:
+        db.add(
+            WorkerHeartbeat(worker_id=worker_id, hostname=hostname, pid=pid, started_at=now, last_heartbeat_at=now)
+        )
+    await db.commit()
+
+
+async def get_worker_health(db: AsyncSession, *, now: datetime | None = None) -> dict:
+    now = now or datetime.now(timezone.utc)
+    stale_cutoff = now - WORKER_HEARTBEAT_STALE_AFTER
+
+    def _is_healthy(last_heartbeat_at: datetime) -> bool:
+        # Postgres (production) always round-trips tz-aware DateTime(timezone=True)
+        # values; SQLite (the test suite's DB) does not preserve tzinfo on read-back.
+        # Normalize defensively so this comparison is correct in both.
+        if last_heartbeat_at.tzinfo is None:
+            last_heartbeat_at = last_heartbeat_at.replace(tzinfo=timezone.utc)
+        return last_heartbeat_at >= stale_cutoff
+
+    all_workers = (await db.execute(select(WorkerHeartbeat))).scalars().all()
+    healthy = [w for w in all_workers if _is_healthy(w.last_heartbeat_at)]
+    unhealthy = [w for w in all_workers if not _is_healthy(w.last_heartbeat_at)]
+
+    return {
+        "healthy_count": len(healthy),
+        "unhealthy_count": len(unhealthy),
+        "workers": [
+            {
+                "worker_id": w.worker_id,
+                "hostname": w.hostname,
+                "pid": w.pid,
+                "last_heartbeat_at": w.last_heartbeat_at,
+                "healthy": _is_healthy(w.last_heartbeat_at),
+            }
+            for w in all_workers
+        ],
+    }
+
+
 async def get_system_health(db: AsyncSession) -> dict:
     """
     Real checks, not decorative: DB connectivity is verified with an actual query,
-    and queue depth is the same live aggregation used by the queue-inspection
-    endpoint. Worker registry / live process health is explicitly NOT included here
-    -- there is no worker heartbeat table in this build (see README) -- this
-    endpoint honestly reports what it can verify rather than fabricating a
-    "workers: healthy" field with no data behind it.
+    queue depth is the same live aggregation used by the queue-inspection endpoint,
+    and worker health is now backed by the real `worker_heartbeats` table (Phase 2)
+    instead of the "not tracked yet" gap this endpoint used to honestly report.
     """
     try:
         await db.execute(select(func.count(Organization.id)))
@@ -184,7 +251,13 @@ async def get_system_health(db: AsyncSession) -> dict:
         database_ok = False
 
     queue_depth = await get_queue_depth(db)
-    return {"database_ok": database_ok, "queue_depth": queue_depth, "checked_at": datetime.now(timezone.utc)}
+    worker_health = await get_worker_health(db)
+    return {
+        "database_ok": database_ok,
+        "queue_depth": queue_depth,
+        "worker_health": worker_health,
+        "checked_at": datetime.now(timezone.utc),
+    }
 
 
 async def get_billing_overview(db: AsyncSession) -> dict:
