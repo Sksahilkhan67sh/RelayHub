@@ -171,6 +171,34 @@ async def test_force_retry_delivery_job_works_on_any_status(client, unique_email
 
 
 @pytest.mark.asyncio
+async def test_force_retry_survives_queue_dispatch_failure(client, unique_email, db_session):
+    """
+    Regression test: a broker outage during the admin force-retry's enqueue() call
+    must not fail the request -- the job's status is already durably reset to
+    `queued` in the same transaction, and reconciliation is the backstop for the
+    dispatch itself.
+    """
+    token = await register_and_get_token(client, unique_email)
+    await create_endpoint(client, token)
+    api_key = await create_api_key(client, token)
+    await make_platform_admin(client, db_session, token)
+
+    resp = await client.post(
+        "/v1/events", json={"event": "payment.success", "payload": {}}, headers={"X-RelayHub-Api-Key": api_key}
+    )
+    job_id = resp.json()["delivery_jobs"][0]["id"]
+
+    async def _broken_enqueue(job_id):
+        raise ConnectionError("simulated broker outage")
+
+    client.fake_queue.enqueue = _broken_enqueue  # type: ignore[method-assign]
+
+    retry_resp = await client.post(f"/v1/admin/delivery-jobs/{job_id}/force-retry", headers={"Authorization": f"Bearer {token}"})
+    assert retry_resp.status_code == 200, retry_resp.text
+    assert retry_resp.json()["status"] == "queued"
+
+
+@pytest.mark.asyncio
 async def test_force_cancel_delivery_job(client, unique_email, db_session):
     token = await register_and_get_token(client, unique_email)
     await create_endpoint(client, token)
