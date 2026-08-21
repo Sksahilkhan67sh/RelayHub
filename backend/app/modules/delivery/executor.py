@@ -34,21 +34,26 @@ class JobAlreadyClaimedError(Exception):
     """Raised when another worker already claimed this job -- not an error, just a signal to skip it."""
 
 
-async def _claim_job(db: AsyncSession, job_id: uuid.UUID) -> DeliveryJob:
+async def _claim_job(db: AsyncSession, job_id: uuid.UUID, *, worker_id: str) -> DeliveryJob:
     """
     Compare-and-set claim: only transitions queued/retrying -> processing if no other
     worker has already done so. This is the "avoid duplicate concurrent processing"
     requirement from the spec, implemented as a portable UPDATE ... WHERE status IN (...)
     rather than Postgres-specific SELECT FOR UPDATE SKIP LOCKED, so it behaves
     identically in tests (SQLite) and production (Postgres).
+
+    Also records `claimed_by_worker_id`/`claimed_at` (Phase 2 follow-up) so
+    `reconcile_stuck_jobs` can check the claiming worker's actual liveness via
+    `worker_heartbeats` instead of relying solely on elapsed time.
     """
+    now = datetime.now(timezone.utc)
     result = await db.execute(
         update(DeliveryJob)
         .where(
             DeliveryJob.id == job_id,
             DeliveryJob.status.in_([DeliveryJobStatus.QUEUED.value, DeliveryJobStatus.RETRYING.value]),
         )
-        .values(status=DeliveryJobStatus.PROCESSING.value)
+        .values(status=DeliveryJobStatus.PROCESSING.value, claimed_by_worker_id=worker_id, claimed_at=now)
     )
     await db.commit()
 
@@ -76,7 +81,7 @@ async def execute_delivery_job(
     region: str = "local",
     http_client: httpx.AsyncClient | None = None,
 ) -> DeliveryJob:
-    job = await _claim_job(db, job_id)
+    job = await _claim_job(db, job_id, worker_id=worker_id)
 
     event = (await db.execute(select(Event).where(Event.id == job.event_id))).scalar_one()
     endpoint = (await db.execute(select(Endpoint).where(Endpoint.id == job.endpoint_id))).scalar_one()
