@@ -48,5 +48,12 @@ celery_app.conf.update(
             "task": "cleanup_expired_delivery_logs",
             "schedule": 86400.0,  # once a day
         },
+        "reconcile-stuck-jobs": {
+            "task": "reconcile_stuck_jobs",
+            # 60s: frequent enough to catch a crashed worker's abandoned job well
+            # within the STUCK_PROCESSING_AFTER heuristic window, cheap enough
+            # (a couple of indexed WHERE status = ... UPDATEs) to run every tick.
+            "schedule": 60.0,
+        },
     },
 )
