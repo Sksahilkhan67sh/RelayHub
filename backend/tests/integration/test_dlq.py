@@ -155,6 +155,68 @@ async def test_bulk_retry_mixed_valid_and_invalid_ids(client, unique_email, db_s
 
 
 @pytest.mark.asyncio
+async def test_retry_dlq_job_survives_queue_dispatch_failure(client, unique_email, db_session):
+    """
+    Regression test: previously a broker outage during the DLQ retry's enqueue()
+    call would propagate as a 500, even though the job's status had already been
+    durably reset to `queued`. The retry must still be reported as successful (the
+    DB state genuinely changed) and the job must remain recoverable via
+    reconciliation, not disappear.
+    """
+    token = await register_and_get_token(client, unique_email)
+    job_id = await _create_dead_lettered_job(client, token, db_session)
+
+    async def _broken_enqueue(job_id):
+        raise ConnectionError("simulated broker outage")
+
+    client.fake_queue.enqueue = _broken_enqueue  # type: ignore[method-assign]
+
+    retry_resp = await client.post(f"/v1/dlq/{job_id}/retry", headers={"Authorization": f"Bearer {token}"})
+    assert retry_resp.status_code == 200, retry_resp.text
+    assert retry_resp.json()["status"] == "queued"
+
+    delivery_resp = await client.get(f"/v1/deliveries/{job_id}", headers={"Authorization": f"Bearer {token}"})
+    assert delivery_resp.json()["status"] == "queued"
+
+
+@pytest.mark.asyncio
+async def test_bulk_retry_survives_partial_queue_dispatch_failure(client, unique_email, db_session):
+    """
+    One job's broker dispatch failing during a bulk retry must not stop the other
+    jobs in the same batch from being dispatched, and must not fail the request --
+    both jobs are already durably reset to `queued` before dispatch is attempted.
+    """
+    token = await register_and_get_token(client, unique_email)
+    await upgrade_to_pro(client, db_session, token)
+    job_id_1 = await _create_dead_lettered_job(client, token, db_session)
+    job_id_2 = await _create_dead_lettered_job(client, token, db_session)
+
+    real_enqueue = client.fake_queue.enqueue
+
+    async def _flaky_enqueue(job_id):
+        if job_id == job_id_1:
+            raise ConnectionError("simulated broker outage")
+        await real_enqueue(job_id)
+
+    client.fake_queue.enqueue = _flaky_enqueue  # type: ignore[method-assign]
+
+    resp = await client.post(
+        "/v1/dlq/bulk-retry",
+        json={"job_ids": [str(job_id_1), str(job_id_2)]},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert set(body["retried"]) == {str(job_id_1), str(job_id_2)}  # both counted as retried at the DB level
+
+    assert job_id_2 in client.fake_queue.queued  # the second job's dispatch still succeeded
+
+    # both jobs' status was durably reset even though job_1's dispatch failed
+    list_resp = await client.get("/v1/dlq", headers={"Authorization": f"Bearer {token}"})
+    assert list_resp.json() == []
+
+
+@pytest.mark.asyncio
 async def test_export_csv_contains_expected_rows(client, unique_email, db_session):
     token = await register_and_get_token(client, unique_email)
     job_id = await _create_dead_lettered_job(client, token, db_session)
