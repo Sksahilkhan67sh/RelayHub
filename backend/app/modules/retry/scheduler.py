@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timezone
 
@@ -8,6 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.queue_client import QueueClient
 from app.modules.delivery.models import DeliveryJob, DeliveryJobStatus
+
+logger = logging.getLogger(__name__)
 
 
 async def enqueue_due_retries(db: AsyncSession, *, queue_client: QueueClient, now: datetime | None = None) -> list[uuid.UUID]:
@@ -31,5 +34,10 @@ async def enqueue_due_retries(db: AsyncSession, *, queue_client: QueueClient, no
     )
     due_jobs = result.scalars().all()
     for job in due_jobs:
-        await queue_client.enqueue(job.id)
+        try:
+            await queue_client.enqueue(job.id)
+        except Exception:  # noqa: BLE001 - one broker failure must not stop the rest of this tick's due jobs,
+            # and must not prevent the next 10s tick from trying again -- the job stays `retrying` in the
+            # DB (unchanged, still due) either way, and reconcile_stuck_jobs is the backstop if this keeps failing.
+            logger.exception("failed to re-enqueue due retry for delivery_job=%s", job.id)
     return [job.id for job in due_jobs]
