@@ -62,6 +62,16 @@ class DeliveryJob(Base, UUIDPKMixin, TimestampMixin, SoftDeleteMixin):
     queued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Lease fields (Phase 2 follow-up): which worker process's CAS claim last moved
+    # this job to `processing`, and when. Set in `_claim_job`, matched against
+    # `worker_heartbeats.worker_id` by `reconcile_stuck_jobs` to distinguish "the
+    # owning worker is still alive, this is just a slow request" from "the owning
+    # worker is gone, this job is genuinely abandoned" -- a real lease rather than
+    # pure elapsed time. Left populated after the job leaves `processing` (not
+    # cleared) purely as forensic history of who last touched it; only meaningful
+    # while status == processing.
+    claimed_by_worker_id: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     event: Mapped["Event"] = relationship(back_populates="delivery_jobs")  # noqa: F821
     # One-directional (no back_populates -- Endpoint doesn't need a `delivery_jobs`
