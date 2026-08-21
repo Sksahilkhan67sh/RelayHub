@@ -1,4 +1,7 @@
+import threading
+
 from celery import Celery
+from celery.signals import worker_process_init, worker_process_shutdown
 
 from app.core.config import settings
 
@@ -57,3 +60,75 @@ celery_app.conf.update(
         },
     },
 )
+
+# Phase 2 reliability addition: real worker-fleet liveness, replacing the
+# "not tracked yet" gap admin/service.py used to honestly report.
+#
+# `worker_process_init` fires once per actual worker child process (each prefork
+# pool child gets its own call; solo/threads pools get exactly one) -- crucially,
+# it is NOT fired by simply importing this module (e.g. the FastAPI process
+# imports it lazily via RedisQueueClient.enqueue), so this never spins up a
+# heartbeat thread in the API process, only in real `celery worker` processes.
+#
+# The loop runs in a background daemon thread rather than as a Celery periodic
+# task because beat-scheduled tasks run centrally on whichever process runs
+# `celery beat` -- they don't naturally give each individual worker process its
+# own identity-scoped tick. A plain thread with its own short asyncio lifecycle
+# per iteration (matching the same fresh-engine-per-call pattern already used by
+# app/workers/tasks.py, for the same asyncpg-event-loop-binding reason) keeps this
+# self-contained and out of the request/task hot path.
+HEARTBEAT_INTERVAL_SECONDS = 15.0
+_heartbeat_stop_event: threading.Event | None = None
+_heartbeat_thread: threading.Thread | None = None
+
+
+def _run_heartbeat_loop(worker_id: str, hostname: str, pid: int, stop_event: threading.Event) -> None:
+    import asyncio
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from app.modules.admin import service as admin_service
+
+    async def _beat_once() -> None:
+        engine = create_async_engine(settings.DATABASE_URL, pool_pre_ping=True)
+        session_maker = async_sessionmaker(bind=engine, expire_on_commit=False)
+        try:
+            async with session_maker() as db:
+                await admin_service.upsert_worker_heartbeat(db, worker_id=worker_id, hostname=hostname, pid=pid)
+        except Exception:  # noqa: BLE001 - a missed heartbeat write must never crash the worker process itself
+            import logging
+
+            logging.getLogger(__name__).exception("worker heartbeat write failed for worker_id=%s", worker_id)
+        finally:
+            await engine.dispose()
+
+    while not stop_event.is_set():
+        asyncio.run(_beat_once())
+        stop_event.wait(HEARTBEAT_INTERVAL_SECONDS)
+
+
+@worker_process_init.connect
+def _start_worker_heartbeat(**kwargs) -> None:
+    import os
+    import socket
+
+    global _heartbeat_stop_event, _heartbeat_thread
+
+    hostname = socket.gethostname()
+    pid = os.getpid()
+    worker_id = f"{hostname}-{pid}"
+
+    _heartbeat_stop_event = threading.Event()
+    _heartbeat_thread = threading.Thread(
+        target=_run_heartbeat_loop,
+        args=(worker_id, hostname, pid, _heartbeat_stop_event),
+        name="worker-heartbeat",
+        daemon=True,
+    )
+    _heartbeat_thread.start()
+
+
+@worker_process_shutdown.connect
+def _stop_worker_heartbeat(**kwargs) -> None:
+    if _heartbeat_stop_event is not None:
+        _heartbeat_stop_event.set()
