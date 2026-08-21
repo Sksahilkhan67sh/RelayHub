@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import uuid
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -24,6 +23,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.core.config import settings
 from app.modules.delivery.executor import JobAlreadyClaimedError, execute_delivery_job
 from app.workers.celery_app import celery_app
+from app.workers.identity import get_worker_id
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 async def _run(job_id: uuid.UUID) -> None:
     engine = create_async_engine(settings.DATABASE_URL, pool_pre_ping=True)
     session_maker = async_sessionmaker(bind=engine, expire_on_commit=False)
-    worker_id = f"{os.uname().nodename if hasattr(os, 'uname') else 'worker'}-{os.getpid()}"
+    worker_id = get_worker_id()
 
     async with session_maker() as db:
         try:
