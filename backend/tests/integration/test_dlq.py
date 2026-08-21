@@ -109,6 +109,44 @@ async def test_retry_dlq_job_resets_and_requeues(client, unique_email, db_sessio
 
 
 @pytest.mark.asyncio
+async def test_double_retry_of_same_dlq_job_is_safe(client, unique_email, db_session):
+    """
+    Regression/verification test for the "duplicate DLQ transition" scenario the
+    Phase 2 brief calls out: two retry requests for the same job (e.g. an admin
+    double-clicking, or a genuinely concurrent retry) must not double-reset the
+    job's attempt history or produce two independent delivery lifecycles. The first
+    retry moves the job out of `dead_letter`; `_get_dlq_job_or_404` filters on
+    `status == dead_letter`, so a second retry attempt -- whether it lands a moment
+    later or would-be concurrently -- can only succeed if it still finds the job in
+    `dead_letter`, which after the first retry it no longer is. The safe outcome is
+    the second attempt being rejected as "not found in DLQ", not a second reset.
+    """
+    token = await register_and_get_token(client, unique_email)
+    job_id = await _create_dead_lettered_job(client, token, db_session)
+
+    first_resp = await client.post(f"/v1/dlq/{job_id}/retry", headers={"Authorization": f"Bearer {token}"})
+    assert first_resp.status_code == 200
+    assert first_resp.json()["status"] == "queued"
+
+    queued_count_after_first_retry = client.fake_queue.queued.count(job_id) + client.fake_queue.queued.count(
+        uuid.UUID(str(job_id))
+    )
+
+    second_resp = await client.post(f"/v1/dlq/{job_id}/retry", headers={"Authorization": f"Bearer {token}"})
+    assert second_resp.status_code == 404  # already retried -- no longer in the DLQ
+
+    # the rejected second retry did not dispatch another delivery attempt
+    queued_count_after_second_attempt = client.fake_queue.queued.count(job_id) + client.fake_queue.queued.count(
+        uuid.UUID(str(job_id))
+    )
+    assert queued_count_after_second_attempt == queued_count_after_first_retry
+
+    delivery_resp = await client.get(f"/v1/deliveries/{job_id}", headers={"Authorization": f"Bearer {token}"})
+    assert delivery_resp.json()["status"] == "queued"
+    assert delivery_resp.json()["attempt_number"] == 0  # reset exactly once, not twice
+
+
+@pytest.mark.asyncio
 async def test_retry_requires_admin_role(client, unique_email, db_session):
     token = await register_and_get_token(client, unique_email)
     job_id = await _create_dead_lettered_job(client, token, db_session)
