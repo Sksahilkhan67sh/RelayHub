@@ -29,7 +29,7 @@ was already covered.
 | Worker | crash/kill *after* CAS claim commits, *before* delivery finishes | Celery redelivers (task_acks_late + task_reject_on_worker_lost), but redelivery hits `_claim_job`, finds status=processing, raises `JobAlreadyClaimedError` → treated as "someone else has it" | **Critical — silent, permanent.** Job stuck in `processing` forever, no error surfaced. | ✅ `reconcile_stuck_jobs` |
 | Queue dispatch | `queue_client.enqueue()` fails at publish time (Redis/broker unreachable) | Exception propagated out of `publish_event`, turning an already-committed DB write into a 500 to the caller | Medium — row not lost, but response was falsely a failure, and nothing re-dispatched it until an operator noticed | ✅ caught + logged; reconciliation backstop |
 | Queue dispatch | same, in `enqueue_due_retries` (10s scanner) | One failing enqueue in a batch raised, aborting the rest of that tick's due jobs | Medium — delayed, not lost (next tick would rescan), but reduces throughput under partial broker degradation | ✅ per-job try/except |
-| Queue dispatch | same, in DLQ retry / bulk retry / admin force-retry | Same shape, not yet hardened | Low-medium — same as above | ⚠️ not fixed this pass (see Remaining Risks) |
+| Queue dispatch | same, in DLQ retry / bulk retry / admin force-retry | Same shape as the two rows above | Low-medium — same as above | ✅ caught + logged, same pattern as #2/#3 (added in a follow-up pass) |
 | DB | transaction failure during event/job creation | `db.flush()` under a single transaction; `IntegrityError` on idempotency race already handled with re-select of the winner | None found — correct as-is | No change needed |
 | Retry engine | attempt numbering / exhaustion / jitter | Already correct and tested (`test_retry_schedule.py`, `test_retry_engine.py`) | None found | No change needed |
 | DLQ transition | retry exhausted → DLQ | Single-transaction, preserves full `DeliveryAttempt` history, clears `next_attempt_at` | None found | No change needed |
@@ -94,9 +94,23 @@ eating the rest of a batch is a silent one).
 **Fix:** per-job try/except inside the loop; one failure is logged and the loop
 continues.
 
-### 4. Backstop — reconciliation also re-dispatches stale `queued`/`retrying` rows
+### 4. Medium — same broker-outage gap in DLQ retry, bulk DLQ retry, and admin force-retry
 
-Beyond the mid-processing-crash case, `reconcile_stuck_jobs` also re-enqueues:
+**Root cause:** identical shape to problem #2, in three more call sites:
+`dlq/service.py`'s `retry_dead_letter_job` (single DLQ retry) and
+`bulk_retry_dead_letter_jobs`, and `admin/service.py`'s `force_retry_delivery_job`.
+Each resets a job's status to `queued` and commits, then calls
+`queue_client.enqueue()` unguarded — a broker failure there would surface as a
+failed retry request even though the retry had, in DB terms, already succeeded.
+
+**Fix:** same try/except pattern as problem #2, applied to all three call sites; the
+bulk-retry loop also isolates one job's dispatch failure from the rest of the batch,
+same as the due-retry scanner fix (problem #3). All three are covered by
+reconciliation's stale-`queued` backstop.
+
+### 5. Backstop — reconciliation also re-dispatches stale `queued`/`retrying` rows
+
+(Numbering follows on from problem #4 above.) Beyond the mid-processing-crash case, `reconcile_stuck_jobs` also re-enqueues:
 - `queued` jobs whose `updated_at` is older than `STALE_DISPATCH_AFTER` (2 min) —
   covers the case where the initial `enqueue()` failed (problem #2 above) even
   before that fix landed, and covers it going forward as defense-in-depth even with
@@ -142,12 +156,20 @@ jitter). Hardened only the *dispatch* side (problems #2 and #3).
 
 ## DLQ
 
-Audited `dlq/service.py`: DLQ transition is already a single-transaction commit
-inside `executor.py`'s `_finish`, attempt history is never destroyed, `next_attempt_at`
-is cleared on both the `failed` and `dead_letter` terminal paths. No changes made —
-no real gap found. Did not add new DLQ-specific tests this pass beyond what already
-exists in `test_retry_engine.py` (exhaustion → dead_letter is already covered);
-concurrent-double-retry-from-DLQ was reasoned through (both concurrent admin retries
+Audited `dlq/service.py`: DLQ transition itself is already a single-transaction
+commit inside `executor.py`'s `_finish`, attempt history is never destroyed,
+`next_attempt_at` is cleared on both the `failed` and `dead_letter` terminal paths —
+no gap found there, no change made.
+
+Did find and fix the broker-outage gap from problem #4 above in both
+`retry_dead_letter_job` (single retry) and `bulk_retry_dead_letter_jobs`, matching
+the pattern already applied to `publish_event`. Regression tests:
+`test_retry_dlq_job_survives_queue_dispatch_failure` and
+`test_bulk_retry_survives_partial_queue_dispatch_failure` (the latter also confirms
+one job's dispatch failure doesn't stop the other job in the same batch from being
+dispatched).
+
+Concurrent-double-retry-from-DLQ was reasoned through (both concurrent admin retries
 succeed harmlessly at the DB level, and the resulting duplicate broker message is
 absorbed by the executor's CAS claim same as any other duplicate enqueue) but not
 given its own explicit test — see Remaining Risks.
@@ -158,6 +180,13 @@ Not modified. Reused DLQ retry path already preserves original attempt history,
 resets the job to a controlled new lifecycle (`attempt_number=0`, `status=queued`),
 and remains tenant-scoped via `_get_dlq_job_or_404`'s `organization_id` filter — read
 and confirmed correct, no fix needed.
+
+## Workers / Admin
+
+`admin/service.py`'s `force_retry_delivery_job` (the one path that can unstick a job
+in *any* status, including `processing`, unlike the customer-facing DLQ retry) had
+the same unguarded-enqueue gap as problem #4 — fixed the same way, with
+`test_force_retry_survives_queue_dispatch_failure` covering it.
 
 ## Security
 
@@ -200,24 +229,28 @@ Tested directly, with real (not simulated-in-prose) code:
 ## Tests
 
 ```
-Full backend suite: 246/246 passing (238 pre-existing + 8 new)
+Full backend suite: 249/249 passing (238 original baseline + 11 new)
   - New: tests/integration/test_reconciliation.py (6 tests)
-  - New: 1 test added to tests/integration/test_events.py
-  - New: 1 test added to tests/integration/test_retry_engine.py
+  - New: 2 tests added to tests/integration/test_events.py / test_retry_engine.py
+    (queue-dispatch-failure resilience in publish_event and enqueue_due_retries)
+  - New: 3 tests added across test_dlq.py / test_admin.py (queue-dispatch-failure
+    resilience in DLQ retry, bulk DLQ retry, and admin force-retry)
 ```
 
 ## Verification
 
 ```
 Typecheck (mypy app/):        PASS — 0 issues, 110 files
-Lint (ruff, files touched):   PASS — 0 issues
+Lint (ruff, files touched):   PASS — 0 issues in every file modified this phase,
+                               including this follow-up pass (dlq/service.py,
+                               admin/service.py, test_dlq.py)
 Lint (ruff, full app+tests):  7 pre-existing findings, all in files NOT touched this
-                               phase (test_admin.py, test_alerts.py,
-                               test_delivery_executor.py, test_delivery_logs.py) —
-                               unused-import/unused-variable/dict-comprehension
-                               style nits carried over from prior phases, not
-                               introduced here
-Full test suite:              PASS — 246/246
+                               phase (test_admin.py's own pre-existing unused-import
+                               findings, test_alerts.py, test_delivery_executor.py,
+                               test_delivery_logs.py) — confirmed identical to the
+                               very first baseline lint run before any changes;
+                               nothing new introduced, including in this follow-up
+Full test suite:              PASS — 249/249
 Migration:                    N/A — no schema change this phase
 Production build:             Not re-run (frontend untouched this phase; backend has
                                no separate "build" step beyond the test/lint/typecheck
@@ -235,13 +268,12 @@ Being direct, as instructed — this is not a zero-risk system after this pass:
    pathological hang could still theoretically cause a duplicate attempt. A real
    lease (worker writes a heartbeat row/column it renews while processing) would
    close this fully; not built this pass.
-2. **DLQ retry / bulk-retry / admin force-retry still call `queue_client.enqueue()`
-   without the same try/except hardening applied to `publish_event` and
-   `enqueue_due_retries`.** The durable DB state is safe either way (status is
-   already flipped and committed before the enqueue call), and
-   `reconcile_stuck_jobs`'s stale-`queued` pass is a backstop, but the *request*
-   itself could still surface a 500 on a broker hiccup during a manual/bulk retry.
-   Same class of fix as #2/#3 above, not yet applied here.
+2. ~~DLQ retry / bulk-retry / admin force-retry still call `queue_client.enqueue()`
+   without the same hardening as `publish_event`.~~ **Fixed in a follow-up pass** —
+   all three now catch broker-dispatch failures the same way, with regression tests
+   (`test_retry_dlq_job_survives_queue_dispatch_failure`,
+   `test_bulk_retry_survives_partial_queue_dispatch_failure`,
+   `test_force_retry_survives_queue_dispatch_failure`).
 3. **No worker heartbeat / fleet health table.** `admin/service.py`'s
    `get_system_health` still honestly reports "not tracked" rather than fabricating
    worker-health data — this phase didn't change that. Building it needs a new
