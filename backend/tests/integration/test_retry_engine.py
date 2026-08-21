@@ -141,3 +141,49 @@ async def test_scanner_enqueues_only_due_jobs(client, unique_email, db_session):
     # scanning does not change job status -- claim logic in the executor owns that
     await db_session.refresh(job_a)
     assert job_a.status == DeliveryJobStatus.RETRYING.value
+
+
+@pytest.mark.asyncio
+async def test_enqueue_due_retries_survives_one_broker_failure(client, unique_email, db_session):
+    """
+    Regression test: previously a single failed enqueue() call (e.g. broker
+    temporarily unreachable) would raise out of enqueue_due_retries entirely,
+    silently skipping every other due job in that scan. One failure must not take
+    down the rest of the tick.
+    """
+    token = await register_and_get_token(client, unique_email)
+    await create_endpoint(client, token)
+    api_key = await create_api_key(client, token)
+
+    resp_a = await client.post(
+        "/v1/events", json={"event": "payment.success", "payload": {}, "idempotency_key": "a"},
+        headers={"X-RelayHub-Api-Key": api_key},
+    )
+    resp_b = await client.post(
+        "/v1/events", json={"event": "payment.success", "payload": {}, "idempotency_key": "b"},
+        headers={"X-RelayHub-Api-Key": api_key},
+    )
+    job_a_id = uuid.UUID(resp_a.json()["delivery_jobs"][0]["id"])
+    job_b_id = uuid.UUID(resp_b.json()["delivery_jobs"][0]["id"])
+
+    now = datetime.now(timezone.utc)
+    for job_id in (job_a_id, job_b_id):
+        job = (await db_session.execute(select(DeliveryJob).where(DeliveryJob.id == job_id))).scalar_one()
+        job.status = DeliveryJobStatus.RETRYING.value
+        job.next_attempt_at = now - timedelta(seconds=5)
+    await db_session.commit()
+
+    class FlakyQueueClient:
+        def __init__(self):
+            self.queued = []
+
+        async def enqueue(self, job_id):
+            if job_id == job_a_id:
+                raise ConnectionError("simulated broker outage")
+            self.queued.append(job_id)
+
+    flaky_queue = FlakyQueueClient()
+    due_ids = await enqueue_due_retries(db_session, queue_client=flaky_queue, now=now)
+
+    assert set(due_ids) == {job_a_id, job_b_id}  # both were found as due
+    assert flaky_queue.queued == [job_b_id]  # job_b still got dispatched despite job_a's failure
