@@ -44,9 +44,24 @@ class BillingOverviewOut(BaseModel):
     past_due_count: int
 
 
+class WorkerInstanceOut(BaseModel):
+    worker_id: str
+    hostname: str
+    pid: int
+    last_heartbeat_at: datetime
+    healthy: bool
+
+
+class WorkerHealthOut(BaseModel):
+    healthy_count: int
+    unhealthy_count: int
+    workers: list[WorkerInstanceOut]
+
+
 class SystemHealthOut(BaseModel):
     database_ok: bool
     queue_depth: QueueDepthOut
+    worker_health: WorkerHealthOut
     checked_at: datetime
 
 
