@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -14,6 +15,8 @@ from app.modules.auth.models import Membership, Organization, Role, User
 from app.modules.billing.models import Plan, Subscription, SubscriptionStatus
 from app.modules.delivery.models import DeliveryJob, DeliveryJobStatus
 from app.modules.endpoints.models import Endpoint
+
+logger = logging.getLogger(__name__)
 
 
 async def list_organizations(db: AsyncSession, *, limit: int = 50, offset: int = 0) -> list[dict]:
@@ -252,7 +255,18 @@ async def force_retry_delivery_job(
     await db.commit()
     await db.refresh(job)
 
-    await queue_client.enqueue(job.id)
+    # Same broker-outage tolerance as the customer-facing DLQ retry and
+    # publish_event: the status flip to `queued` is already durably committed, so a
+    # dispatch failure here must not fail this admin action or leave the job
+    # silently stuck -- reconcile_stuck_jobs' stale-`queued` pass is the backstop.
+    try:
+        await queue_client.enqueue(job.id)
+    except Exception:  # noqa: BLE001 - broker outage must not fail an already-committed force-retry
+        logger.exception(
+            "queue dispatch failed for admin force-retry of delivery_job=%s -- job remains queued in "
+            "the database and will be picked up by reconciliation",
+            job.id,
+        )
     return job
 
 
