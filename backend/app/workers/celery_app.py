@@ -112,11 +112,13 @@ def _start_worker_heartbeat(**kwargs) -> None:
     import os
     import socket
 
+    from app.workers.identity import get_worker_id
+
     global _heartbeat_stop_event, _heartbeat_thread
 
     hostname = socket.gethostname()
     pid = os.getpid()
-    worker_id = f"{hostname}-{pid}"
+    worker_id = get_worker_id()
 
     _heartbeat_stop_event = threading.Event()
     _heartbeat_thread = threading.Thread(
