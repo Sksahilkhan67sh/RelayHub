@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import io
+import logging
 import uuid
 from datetime import datetime, timezone
 
@@ -14,6 +15,8 @@ from app.common.queue_client import QueueClient
 from app.modules.audit import service as audit_service
 from app.modules.audit.models import AuditAction
 from app.modules.delivery.models import DeliveryJob, DeliveryJobStatus
+
+logger = logging.getLogger(__name__)
 
 
 def _latest_attempt(job: DeliveryJob):
@@ -96,7 +99,20 @@ async def retry_dead_letter_job(
     await db.commit()
     await db.refresh(job, attribute_names=["attempts"])
 
-    await queue_client.enqueue(job.id)
+    # The status flip to `queued` above is already durably committed -- a broker
+    # failure here must not surface as a failed retry request (the retry DID
+    # happen, from the DB's point of view) and must not be left silently
+    # undispatched: reconcile_stuck_jobs' stale-`queued` pass will pick this row up
+    # within STALE_DISPATCH_AFTER if the immediate dispatch below fails. Same
+    # reasoning as events/service.py's publish_event fix.
+    try:
+        await queue_client.enqueue(job.id)
+    except Exception:  # noqa: BLE001 - broker outage must not fail an already-committed DLQ retry
+        logger.exception(
+            "queue dispatch failed for DLQ retry of delivery_job=%s -- job remains queued in the "
+            "database and will be picked up by reconciliation",
+            job.id,
+        )
     return job
 
 
@@ -166,7 +182,12 @@ async def bulk_retry_dead_letter_jobs(
     await db.commit()
 
     for job_id in retried:
-        await queue_client.enqueue(job_id)
+        try:
+            await queue_client.enqueue(job_id)
+        except Exception:  # noqa: BLE001 - one broker failure must not abort dispatch of the rest of this
+            # bulk retry, and the already-committed `queued` rows are safely picked up by reconciliation
+            # even if this dispatch never succeeds.
+            logger.exception("queue dispatch failed for bulk DLQ retry of delivery_job=%s", job_id)
 
     return retried, skipped
 
