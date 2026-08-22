@@ -12,6 +12,7 @@ from app.modules.admin.schemas import (
     BillingOverviewOut,
     CreateAbuseReportRequest,
     CreateFeatureFlagRequest,
+    DeliveryMetricsOut,
     FeatureFlagOut,
     FeatureFlagOverrideOut,
     ForceActionResponse,
@@ -95,6 +96,11 @@ async def get_queue_depth(auth: AuthContext = Depends(require_platform_admin), d
 @router.get("/system-health", response_model=SystemHealthOut)
 async def get_system_health(auth: AuthContext = Depends(require_platform_admin), db: AsyncSession = Depends(get_db)):
     return await service.get_system_health(db)
+
+
+@router.get("/delivery-metrics", response_model=DeliveryMetricsOut)
+async def get_delivery_metrics(auth: AuthContext = Depends(require_platform_admin), db: AsyncSession = Depends(get_db)):
+    return await service.get_delivery_metrics(db)
 
 
 @router.get("/billing-overview", response_model=BillingOverviewOut)
