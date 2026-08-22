@@ -15,10 +15,16 @@ export default function AnalyticsPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    // Deliberately calling /v1/insights (an alias of /v1/analytics -- see
+    // backend/app/modules/analytics/routes.py's module docstring) rather than
+    // /v1/analytics directly: ad-blocker/privacy-extension filter lists commonly
+    // match the substring "analytics" in request URLs, which was silently
+    // blocking this page's own first-party requests for some users
+    // (net::ERR_BLOCKED_BY_CLIENT) before they ever reached the server.
     Promise.all([
-      api.get<AnalyticsSummary>("/v1/analytics/summary"),
-      api.get<EventTypeVolume[]>("/v1/analytics/events-by-type"),
-      api.get<EndpointHealthOut[]>("/v1/analytics/endpoint-health"),
+      api.get<AnalyticsSummary>("/v1/insights/summary"),
+      api.get<EventTypeVolume[]>("/v1/insights/events-by-type"),
+      api.get<EndpointHealthOut[]>("/v1/insights/endpoint-health"),
     ])
       .then(([s, t, h]) => {
         setSummary(s);
