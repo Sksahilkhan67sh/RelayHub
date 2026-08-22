@@ -86,7 +86,13 @@ app.include_router(events_router, prefix=settings.API_V1_PREFIX)
 app.include_router(deliveries_router, prefix=settings.API_V1_PREFIX)
 app.include_router(dlq_router, prefix=settings.API_V1_PREFIX)
 app.include_router(logs_router, prefix=settings.API_V1_PREFIX)
-app.include_router(analytics_router, prefix=settings.API_V1_PREFIX)
+# Mounted twice deliberately -- see app/modules/analytics/routes.py's module
+# docstring: /v1/analytics is the original, published, SDK-referenced path (kept
+# unchanged for backward compatibility); /v1/insights is an identical alias the
+# first-party web dashboard uses instead, to avoid ad-blocker filter lists that
+# match the substring "analytics" in first-party request URLs.
+app.include_router(analytics_router, prefix=f"{settings.API_V1_PREFIX}/analytics")
+app.include_router(analytics_router, prefix=f"{settings.API_V1_PREFIX}/insights", include_in_schema=False)
 app.include_router(alerts_router, prefix=settings.API_V1_PREFIX)
 app.include_router(billing_router, prefix=settings.API_V1_PREFIX)
 app.include_router(admin_router, prefix=settings.API_V1_PREFIX)
