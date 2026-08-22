@@ -58,6 +58,16 @@ class WorkerHealthOut(BaseModel):
     workers: list[WorkerInstanceOut]
 
 
+class DeliveryMetricsOut(BaseModel):
+    window_seconds: int
+    avg_delivery_latency_ms: float | None
+    p95_delivery_latency_ms: int | None
+    retry_rate: float | None
+    dlq_rate: float | None
+    stuck_jobs_count: int
+    sample_size: int
+
+
 class SystemHealthOut(BaseModel):
     database_ok: bool
     queue_depth: QueueDepthOut
