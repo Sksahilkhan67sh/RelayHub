@@ -21,6 +21,7 @@ import uuid
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.config import settings
+from app.core.tracing import get_tracer
 from app.modules.delivery.executor import JobAlreadyClaimedError, execute_delivery_job
 from app.workers.celery_app import celery_app
 from app.workers.identity import get_worker_id
@@ -58,7 +59,19 @@ async def _run_check_due_retries() -> None:
 
 @celery_app.task(name="deliver_webhook", bind=True, max_retries=0)  # retry SCHEDULING is this module's job, not Celery's
 def deliver_webhook(self, job_id: str) -> None:
-    asyncio.run(_run(uuid.UUID(job_id)))
+    # Distributed-tracing context propagation (OTel follow-up): continue the same
+    # trace the publish_event request started, rather than opening an unrelated
+    # one -- see queue_client.py's inject() call for the other half of this. When
+    # tracing is disabled, `extract` on an empty/missing carrier and
+    # `start_as_current_span` against a no-op tracer are both harmless no-ops, so
+    # this code path costs nothing when OTEL_EXPORTER_OTLP_ENDPOINT is unset.
+    from opentelemetry.propagate import extract
+
+    parent_ctx = extract(self.request.headers or {})
+    tracer = get_tracer(__name__)
+    with tracer.start_as_current_span("deliver_webhook", context=parent_ctx) as span:
+        span.set_attribute("relayhub.delivery_job_id", job_id)
+        asyncio.run(_run(uuid.UUID(job_id)))
 
 
 @celery_app.task(name="check_due_retries")
@@ -104,4 +117,8 @@ async def _run_reconcile_stuck_jobs() -> None:
 
 @celery_app.task(name="reconcile_stuck_jobs")
 def reconcile_stuck_jobs_task() -> None:
-    asyncio.run(_run_reconcile_stuck_jobs())
+    # Own trace (no parent context) -- this is a periodic beat-scheduled task, not
+    # caused by any single inbound request, so there's nothing to link it to.
+    tracer = get_tracer(__name__)
+    with tracer.start_as_current_span("reconcile_stuck_jobs"):
+        asyncio.run(_run_reconcile_stuck_jobs())
