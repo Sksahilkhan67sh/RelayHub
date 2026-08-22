@@ -46,9 +46,13 @@ export default function DashboardPage() {
         const granularity = granularityFor(range);
 
         const [summaryData, timeSeriesData, topEndpointsData, usageData] = await Promise.all([
-          api.get<AnalyticsSummary>(`/v1/analytics/summary${dateParams ? `?${dateParams}` : ""}`),
-          api.get<TimeSeriesBucket[]>(`/v1/analytics/deliveries-over-time?granularity=${granularity}${sep}${dateParams}`),
-          api.get<TopEndpoint[]>(`/v1/analytics/top-endpoints?limit=5${sep}${dateParams}`),
+          // /v1/insights is an alias of /v1/analytics used by this first-party
+          // dashboard specifically to avoid ad-blocker filter lists that match
+          // "analytics" in request URLs -- see
+          // backend/app/modules/analytics/routes.py's module docstring.
+          api.get<AnalyticsSummary>(`/v1/insights/summary${dateParams ? `?${dateParams}` : ""}`),
+          api.get<TimeSeriesBucket[]>(`/v1/insights/deliveries-over-time?granularity=${granularity}${sep}${dateParams}`),
+          api.get<TopEndpoint[]>(`/v1/insights/top-endpoints?limit=5${sep}${dateParams}`),
           api.get<UsageSummary>("/v1/billing/usage"),
         ]);
         if (cancelled) return;
