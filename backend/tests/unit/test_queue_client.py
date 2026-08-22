@@ -23,4 +23,4 @@ async def test_enqueue_dispatches_to_celery_broker_not_a_separate_redis_list():
     with patch("app.workers.celery_app.celery_app", fake_celery_app):
         await client.enqueue(job_id)
 
-    fake_celery_app.send_task.assert_called_once_with("deliver_webhook", args=[str(job_id)])
+    fake_celery_app.send_task.assert_called_once_with("deliver_webhook", args=[str(job_id)], headers=None)
