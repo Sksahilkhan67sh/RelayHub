@@ -39,9 +39,20 @@ class RedisQueueClient:
         self._redis_url = redis_url
 
     async def enqueue(self, job_id: uuid.UUID) -> None:
+        from opentelemetry.propagate import inject
+
         from app.workers.celery_app import celery_app
 
-        celery_app.send_task("deliver_webhook", args=[str(job_id)])
+        # Distributed-tracing context propagation (OTel follow-up): inject the
+        # current span's W3C traceparent into the Celery task's headers, so
+        # tasks.py's deliver_webhook can extract it and continue the same trace in
+        # the worker process, rather than starting an unrelated, disconnected one.
+        # `inject()` is a no-op that writes nothing when tracing is disabled (see
+        # app/core/tracing.py) -- this call is always safe to make.
+        headers: dict[str, str] = {}
+        inject(headers)
+
+        celery_app.send_task("deliver_webhook", args=[str(job_id)], headers=headers or None)
 
 
 class InMemoryQueueClient:
