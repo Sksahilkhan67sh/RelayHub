@@ -174,6 +174,84 @@ async def get_queue_depth(db: AsyncSession) -> dict:
     }
 
 
+# How long a job may sit in `processing` before this read-only metric counts it as
+# "stuck" for dashboard purposes. Intentionally the same threshold
+# `reconcile_stuck_jobs` uses as its own time-heuristic fallback (see
+# retry/reconciliation.py) so this number means the same thing an operator would
+# expect: "how many jobs would reconciliation's fallback path act on right now".
+# Duplicated rather than imported for the same reason admin/service.py's own
+# WORKER_HEARTBEAT_STALE_AFTER is duplicated in reconciliation.py -- the two
+# modules are allowed to tune their thresholds independently over time.
+METRICS_STUCK_PROCESSING_AFTER = timedelta(minutes=10)
+
+
+async def get_delivery_metrics(db: AsyncSession, *, window: timedelta = timedelta(hours=1)) -> dict:
+    """
+    Phase 2 section 16 ("Observability") asks for delivery latency, retry rate, DLQ
+    rate, and stuck-job visibility beyond what `get_queue_depth` already covers
+    (queue depth by status, success/failure counts). This is the rest of that list,
+    computed directly from existing tables -- no new dependency, consistent with
+    the "avoid unnecessary dependencies, use the existing monitoring architecture"
+    instruction, since there was no metrics-export pipeline to plug into.
+    """
+    now = datetime.now(timezone.utc)
+    window_start = now - window
+
+    from app.modules.delivery.models import DeliveryAttempt  # local import: avoids a module-level cycle with delivery
+
+    durations = (
+        await db.execute(
+            select(DeliveryAttempt.duration_ms).where(
+                DeliveryAttempt.completed_at >= window_start, DeliveryAttempt.error_category == "none"
+            )
+        )
+    ).scalars().all()
+    sorted_durations = sorted(durations)
+    avg_latency_ms = (sum(sorted_durations) / len(sorted_durations)) if sorted_durations else None
+    p95_latency_ms = (
+        sorted_durations[min(int(len(sorted_durations) * 0.95), len(sorted_durations) - 1)]
+        if sorted_durations
+        else None
+    )
+
+    completed_in_window = (
+        await db.execute(
+            select(DeliveryJob.status, DeliveryJob.attempt_number).where(
+                DeliveryJob.status.in_(
+                    [DeliveryJobStatus.SUCCESS.value, DeliveryJobStatus.FAILED.value, DeliveryJobStatus.DEAD_LETTER.value]
+                ),
+                DeliveryJob.completed_at >= window_start,
+            )
+        )
+    ).all()
+    total_completed = len(completed_in_window)
+    retried_count = sum(1 for row in completed_in_window if row.attempt_number > 1)
+    dead_lettered_count = sum(1 for row in completed_in_window if row.status == DeliveryJobStatus.DEAD_LETTER.value)
+    retry_rate = (retried_count / total_completed) if total_completed else None
+    dlq_rate = (dead_lettered_count / total_completed) if total_completed else None
+
+    stuck_cutoff = now - METRICS_STUCK_PROCESSING_AFTER
+    stuck_jobs_count = (
+        await db.execute(
+            select(func.count(DeliveryJob.id)).where(
+                DeliveryJob.status == DeliveryJobStatus.PROCESSING.value,
+                DeliveryJob.updated_at < stuck_cutoff,
+                DeliveryJob.deleted_at.is_(None),
+            )
+        )
+    ).scalar_one()
+
+    return {
+        "window_seconds": int(window.total_seconds()),
+        "avg_delivery_latency_ms": avg_latency_ms,
+        "p95_delivery_latency_ms": p95_latency_ms,
+        "retry_rate": retry_rate,
+        "dlq_rate": dlq_rate,
+        "stuck_jobs_count": stuck_jobs_count,
+        "sample_size": total_completed,
+    }
+
+
 # A worker whose heartbeat is older than this is considered unhealthy/gone -- a few
 # multiples of the heartbeat write interval (HEARTBEAT_INTERVAL_SECONDS in
 # app/workers/celery_app.py) so a single missed tick under load doesn't flip a
