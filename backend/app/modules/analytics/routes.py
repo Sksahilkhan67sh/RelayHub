@@ -1,3 +1,32 @@
+"""
+This router is deliberately mounted at two paths in main.py:
+
+  /v1/analytics/...  -- the original, published path. Kept exactly as-is because
+                         it's a public, documented API surface: the Node and Python
+                         SDKs (sdks/node/src/resources/analytics.ts,
+                         sdks/python/relayhub/resources/analytics.py) and the
+                         public API reference docs (apps/web/lib/api-modules-data.ts)
+                         all hard-code this path. Removing or renaming it would
+                         break every existing customer integration.
+
+  /v1/insights/...    -- an identical alias, added because "analytics" in a URL is
+                         a very common ad-blocker/privacy-extension filter-list
+                         pattern (EasyPrivacy and similar lists match the substring
+                         regardless of first-party vs. third-party intent). The
+                         RelayHub dashboard's own analytics page was intermittently
+                         failing to load for users running common ad blockers,
+                         because the browser extension was blocking the dashboard's
+                         own first-party XHR to /v1/analytics/events-by-type as
+                         `net::ERR_BLOCKED_BY_CLIENT` before it ever reached this
+                         server. The first-party web dashboard (apps/web) now calls
+                         /v1/insights/... instead; the SDKs and public docs
+                         continue to reference /v1/analytics/... unchanged.
+
+Both paths route through the exact same handler functions below -- there is no
+duplicated logic, no risk of the two paths drifting apart in behavior, and no
+API-key/session distinction between them (auth is identical either way).
+"""
+
 import csv
 import io
 from datetime import datetime
@@ -17,7 +46,7 @@ from app.modules.analytics.schemas import (
 from app.modules.auth.dependencies import AuthContext, require_role
 from app.modules.auth.models import Role
 
-router = APIRouter(prefix="/analytics", tags=["analytics"])
+router = APIRouter(tags=["analytics"])
 
 
 @router.get("/summary", response_model=SummaryOut)
