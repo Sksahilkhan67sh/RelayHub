@@ -206,6 +206,36 @@ recovered immediately because its worker's heartbeat is confirmed stale), and
 (a job whose worker has zero heartbeat rows correctly falls back to the original
 behavior rather than being treated as either confirmed-alive or confirmed-dead).
 
+### 8. Follow-up — real delivery-latency/retry-rate/DLQ-rate/stuck-jobs metrics
+
+**Background:** Phase 2 section 16 ("Observability") asks for delivery latency,
+retry rate, DLQ rate, and stuck-job visibility beyond what `get_queue_depth`
+already covered (queue depth by status, success/failure counts in the last hour).
+There was no metrics-export pipeline (Prometheus/OTel) to plug these into — see
+Remaining Risks, unchanged — so this stays within the existing
+admin-endpoint-based monitoring pattern rather than introducing a new dependency,
+per the "use the existing monitoring architecture, avoid unnecessary dependencies"
+instruction.
+
+**Fix:** new `get_delivery_metrics()` (`admin/service.py`) and `GET
+/admin/delivery-metrics` endpoint, computing over a configurable time window
+(default 1 hour): average and p95 delivery latency (from `DeliveryAttempt.duration_ms`
+for successful attempts), retry rate and DLQ rate (from completed `DeliveryJob`
+rows' `attempt_number`/`status`), and a live count of jobs currently stuck in
+`processing` past the same threshold `reconcile_stuck_jobs` uses for its own
+time-heuristic fallback — so this number means "how many jobs would reconciliation
+act on right now if the lease didn't apply," not an arbitrary separate threshold.
+All rate/latency fields are `None` (not a divide-by-zero error or a misleading `0`)
+when there's no data yet in the window, correctly distinguishing "no deliveries
+happened" from "0% failure rate."
+
+Regression tests: `test_delivery_metrics_empty_state` (nulls, not errors, with zero
+data), `test_delivery_metrics_reflects_real_deliveries` (a real successful delivery
+moves `sample_size`, `avg_delivery_latency_ms`, and `dlq_rate`/`retry_rate`
+together, proving the numbers come from actual rows), and
+`test_delivery_metrics_stuck_jobs_count` (a job artificially aged past the
+threshold is counted, proving the stuck-jobs read is live, not cached/fake).
+
 ## Database
 
 Two migrations this phase, both additive-only (no changes to existing columns, no
@@ -307,17 +337,19 @@ The new `worker_heartbeats` table and its write path are similarly internal-only
 no tenant scoping applies (it's platform infrastructure, not tenant data) and it's
 only ever read through the existing `require_platform_admin`-gated `system-health`
 endpoint — same authorization boundary as the rest of `admin/service.py`, not a new
-one.
+one. The new `delivery-metrics` endpoint sits behind the same
+`require_platform_admin` dependency as every other route in this router.
 
 ## Observability
 
 Added structured `logger.warning` calls in `reconcile_stuck_jobs` (when anything is
 recovered) and in the queue-dispatch-failure paths (problems #2/#3/#4), so operators
-can see reconciliation activity and dispatch failures in logs. Also added, this
-round: real worker-fleet liveness surfaced through `system-health` (Problem #6) —
-this is a genuine new observability signal, not just a log line, and is the one
-piece of Phase 2 section 9 ("Worker Health") that was previously an honestly-
-documented gap rather than an implementation.
+can see reconciliation activity and dispatch failures in logs. Also added: real
+worker-fleet liveness surfaced through `system-health` (Problem #6), and real
+delivery-latency/retry-rate/DLQ-rate/stuck-jobs metrics surfaced through the new
+`delivery-metrics` endpoint (Problem #8) — both are genuine new observability
+signals, not just log lines, and together close most of what Phase 2 section 16
+("Observability") and section 9 ("Worker Health") ask for.
 
 Still **not** added: Prometheus/OTel metrics export — `OTEL_EXPORTER_OTLP_ENDPOINT`
 exists as an unused config setting from before this phase; no metrics-export
@@ -350,6 +382,9 @@ Tested directly, with real (not simulated-in-prose) code:
 | Stuck-looking job left alone because its worker is confirmed alive (30 min stuck, 3x past the time heuristic) | **PASS** — `test_reconciliation_lease_overrides_time_heuristic_when_worker_alive` |
 | Stuck job recovered fast because its worker is confirmed dead (2 min stuck, nowhere near the time heuristic) | **PASS** — `test_reconciliation_lease_recovers_job_fast_when_worker_confirmed_dead` |
 | Lease correctly falls back to time heuristic when the claiming worker has no heartbeat history | **PASS** — `test_reconciliation_falls_back_to_time_heuristic_when_worker_has_no_heartbeat_history` |
+| Delivery-metrics with zero data (no divide-by-zero, correct nulls) | **PASS** — `test_delivery_metrics_empty_state` |
+| Delivery-metrics reflect a real successful delivery | **PASS** — `test_delivery_metrics_reflects_real_deliveries` |
+| Delivery-metrics stuck-jobs count is live, not cached | **PASS** — `test_delivery_metrics_stuck_jobs_count` |
 | Redis fully unavailable for an extended period (not just one call) | **Not tested** — see Remaining Risks |
 | Database connection pool exhaustion | **Not tested** — see Remaining Risks |
 | Large queue backlog / load test | **Not tested** — see Remaining Risks |
@@ -357,9 +392,9 @@ Tested directly, with real (not simulated-in-prose) code:
 ## Tests
 
 ```
-Full backend suite: 256/256 passing (238 original baseline + 18 new)
+Full backend suite: 259/259 passing (238 original baseline + 21 new)
   - New: tests/integration/test_reconciliation.py (10 tests total: 6 from the
-    initial reconciliation work + 4 lease-specific tests this round)
+    initial reconciliation work + 4 lease-specific tests)
   - New: 2 tests added to tests/integration/test_events.py / test_retry_engine.py
     (queue-dispatch-failure resilience in publish_event and enqueue_due_retries)
   - New: 3 tests added across test_dlq.py / test_admin.py (queue-dispatch-failure
@@ -367,6 +402,8 @@ Full backend suite: 256/256 passing (238 original baseline + 18 new)
   - New: 1 test added to test_dlq.py (double-retry-of-same-DLQ-job safety)
   - New: 2 tests added to test_admin.py (worker heartbeat reporting + upsert
     idempotency)
+  - New: 3 tests added to test_admin.py (delivery-metrics: empty state, real
+    deliveries, stuck-jobs count)
 ```
 
 ## Verification
@@ -374,23 +411,27 @@ Full backend suite: 256/256 passing (238 original baseline + 18 new)
 ```
 Typecheck (mypy app/):        PASS — 0 issues, 111 files
 Lint (ruff, files touched):   PASS — 0 issues in every app/ and tests/ file modified
-                               across all three rounds of this phase. Both new
+                               across all four rounds of this phase. Both new
                                migration files (0014, 0015) carry the same
                                import-ordering style finding (I001) present in
                                EVERY existing migration file 0001-0013 — confirmed
                                by running ruff against the full alembic/ directory
                                — left as-is to stay consistent with the established
                                convention rather than fixing it in isolation on the
-                               new files only.
-Lint (ruff, full app+tests):  7 pre-existing findings in app/+tests/, all in files
-                               NOT touched this phase (test_admin.py's own
-                               pre-existing unused-import findings, test_alerts.py,
-                               test_delivery_executor.py, test_delivery_logs.py) —
-                               confirmed identical to the very first baseline lint
-                               run before any changes; nothing new introduced.
+                               new files only. As a side effect of this round's edit
+                               to test_admin.py, one pre-existing baseline
+                               unused-import finding in that file was also resolved
+                               (not the point of the change, just a consequence of
+                               reusing an already-imported name instead of
+                               re-importing it locally).
+Lint (ruff, full app+tests):  5 pre-existing findings remain in app/+tests/, all in
+                               files NOT touched this phase (test_alerts.py,
+                               test_delivery_executor.py, test_delivery_logs.py,
+                               tests/conftest.py's deliberately-ordered model
+                               imports) — confirmed pre-existing, not introduced.
                                Separately, pre-existing findings across every file
                                in alembic/versions/ (see above) — same story.
-Full test suite:              PASS — 256/256
+Full test suite:              PASS — 259/259
 Migration:                    Two additive migrations this phase overall:
                                0014_worker_heartbeats.py and
                                0015_delivery_job_claim_lease.py. Neither could be
@@ -417,16 +458,6 @@ Being direct, as instructed — this is not a zero-risk system after this pass:
    The original time heuristic remains as the fallback for jobs with no lease
    signal (pre-migration rows, or a worker with zero heartbeat history) — see
    Problem #7 above for the full design and its tests.
-   even though worker-*fleet* liveness (item 3, below) is now real. The new
-   `worker_heartbeats` table proves a given worker process is alive, but
-   `reconcile_stuck_jobs` doesn't yet cross-reference it — `DeliveryJob` doesn't
-   record which `worker_id` claimed it or when, so there's no way to ask "is the
-   specific worker holding *this* job still alive" versus "are *any* workers
-   alive." Closing this fully would mean the executor's `_claim_job` writing
-   `worker_id`/`claimed_at` onto the job row, and `reconcile_stuck_jobs` checking
-   that worker's heartbeat instead of (or in addition to) elapsed time. Not built
-   this pass — the current 10-minute time heuristic remains the active safety net
-   and continues to be conservative relative to the max allowed endpoint timeout.
 2. ~~DLQ retry / bulk-retry / admin force-retry still call `queue_client.enqueue()`
    without the same hardening as `publish_event`.~~ **Fixed** — all three now catch
    broker-dispatch failures the same way, with regression tests
@@ -438,10 +469,15 @@ Being direct, as instructed — this is not a zero-risk system after this pass:
    worker process starts via `worker_process_init`, surfaced through
    `get_system_health`'s new `worker_health` field, and (as of item 1 above) also
    consumed directly by `reconcile_stuck_jobs` for per-job lease checks.
-4. **No metrics/tracing export.** Structured logging exists and now covers the new
-   reconciliation/dispatch-failure paths; there's no Prometheus/OTel wiring, despite
-   `OTEL_EXPORTER_OTLP_ENDPOINT` existing as a config placeholder from an earlier
-   phase.
+4. **Partially addressed — in-app metrics exist, but no export pipeline.**
+   `get_delivery_metrics()` / `GET /admin/delivery-metrics` (Problem #8) now surface
+   real delivery latency, retry rate, DLQ rate, and stuck-job counts — closing the
+   "no visibility at all" version of this gap. What's still missing is
+   Prometheus/OTel *export*: nothing in this codebase pushes or exposes these in a
+   scrape/collector-compatible format, so an external monitoring stack still can't
+   consume them without polling this admin endpoint and adapting the shape itself.
+   `OTEL_EXPORTER_OTLP_ENDPOINT` remains an unused config placeholder from an
+   earlier phase.
 5. ~~DLQ concurrent-double-retry (reasoned through as safe, not given its own
    test).~~ **Fixed** — `test_double_retry_of_same_dlq_job_is_safe` now covers it
    directly.
