@@ -200,6 +200,95 @@ async def test_worker_heartbeat_upsert_updates_existing_row_not_duplicates(clien
 
 
 @pytest.mark.asyncio
+async def test_delivery_metrics_empty_state(client, unique_email, db_session):
+    """No completed deliveries yet -- rates and latency are null, not divide-by-zero errors."""
+    token = await register_and_get_token(client, unique_email)
+    await make_platform_admin(client, db_session, token)
+
+    resp = await client.get("/v1/admin/delivery-metrics", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["sample_size"] == 0
+    assert body["avg_delivery_latency_ms"] is None
+    assert body["p95_delivery_latency_ms"] is None
+    assert body["retry_rate"] is None
+    assert body["dlq_rate"] is None
+    assert body["stuck_jobs_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_delivery_metrics_reflects_real_deliveries(client, unique_email, db_session):
+    """
+    Regression test: delivery-metrics must compute from actual DeliveryAttempt /
+    DeliveryJob rows, not placeholder values. One successful delivery and one
+    dead-lettered delivery should move sample_size, dlq_rate, and latency together.
+    """
+    from app.modules.delivery import executor as executor_module
+
+    token = await register_and_get_token(client, unique_email)
+    await make_platform_admin(client, db_session, token)
+    await create_endpoint(client, token)
+    api_key = await create_api_key(client, token)
+
+    async def _fake_resolve(url: str) -> str:
+        return "93.184.216.34"
+
+    orig = executor_module.resolve_and_validate
+    executor_module.resolve_and_validate = _fake_resolve
+    try:
+        # one successful delivery
+        resp = await client.post(
+            "/v1/events", json={"event": "payment.success", "payload": {}}, headers={"X-RelayHub-Api-Key": api_key}
+        )
+        job_id = uuid.UUID(resp.json()["delivery_jobs"][0]["id"])
+
+        async def _ok(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200)
+
+        mock_client = httpx.AsyncClient(transport=httpx.MockTransport(_ok))
+        await execute_delivery_job(db_session, job_id=job_id, http_client=mock_client)
+        await mock_client.aclose()
+    finally:
+        executor_module.resolve_and_validate = orig
+
+    resp = await client.get("/v1/admin/delivery-metrics", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["sample_size"] == 1
+    assert body["dlq_rate"] == 0.0
+    assert body["retry_rate"] == 0.0
+    assert body["avg_delivery_latency_ms"] is not None
+    assert body["avg_delivery_latency_ms"] >= 0
+
+
+@pytest.mark.asyncio
+async def test_delivery_metrics_stuck_jobs_count(client, unique_email, db_session):
+    """A job stuck in `processing` past the metrics threshold is counted, a fresh one is not."""
+    from sqlalchemy import update
+
+    from app.modules.delivery.models import DeliveryJob, DeliveryJobStatus
+
+    token = await register_and_get_token(client, unique_email)
+    await make_platform_admin(client, db_session, token)
+    await create_endpoint(client, token)
+    api_key = await create_api_key(client, token)
+
+    resp = await client.post(
+        "/v1/events", json={"event": "payment.success", "payload": {}}, headers={"X-RelayHub-Api-Key": api_key}
+    )
+    job_id = uuid.UUID(resp.json()["delivery_jobs"][0]["id"])
+
+    long_ago = datetime.now(timezone.utc) - timedelta(minutes=30)
+    await db_session.execute(
+        update(DeliveryJob).where(DeliveryJob.id == job_id).values(status=DeliveryJobStatus.PROCESSING.value, updated_at=long_ago)
+    )
+    await db_session.commit()
+
+    resp = await client.get("/v1/admin/delivery-metrics", headers={"Authorization": f"Bearer {token}"})
+    assert resp.json()["stuck_jobs_count"] == 1
+
+
+@pytest.mark.asyncio
 async def test_billing_overview_aggregates_correctly(client, unique_email, db_session):
     token = await register_and_get_token(client, unique_email)
     await make_platform_admin(client, db_session, token)
