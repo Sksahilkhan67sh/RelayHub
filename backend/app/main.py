@@ -1,10 +1,15 @@
-from fastapi import FastAPI, status
+from fastapi import Depends, FastAPI, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
+from prometheus_client import CONTENT_TYPE_LATEST, REGISTRY, generate_latest
+from prometheus_fastapi_instrumentator import Instrumentator
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.error_handlers import register_error_handlers
 from app.core.health import check_database, check_redis
+from app.core.metrics import refresh_reliability_gauges
+from app.db.session import get_db
 from app.middleware.body_size_limit import BodySizeLimitMiddleware
 from app.middleware.request_id import RequestIDMiddleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
@@ -51,6 +56,15 @@ app.add_middleware(BodySizeLimitMiddleware)
 
 register_error_handlers(app)
 
+# Metrics export (Phase 2 follow-up -- see app/core/metrics.py's module docstring
+# for the full design rationale). `instrument()` attaches middleware that
+# accumulates HTTP request count/latency/in-progress into the default
+# prometheus_client registry as the app serves real traffic; deliberately no
+# `.expose()` call here, since the custom `/metrics` route below needs to refresh
+# the reliability gauges (which share that same default registry) immediately
+# before rendering, and `.expose()` doesn't offer a hook for that.
+Instrumentator().instrument(app)
+
 app.include_router(auth_router, prefix=settings.API_V1_PREFIX)
 app.include_router(org_router, prefix=settings.API_V1_PREFIX)
 app.include_router(invitations_router, prefix=settings.API_V1_PREFIX)
@@ -84,3 +98,22 @@ async def health_ready():
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         content={"status": "not_ready", "dependencies": dependencies},
     )
+
+
+@app.get("/metrics", include_in_schema=False, tags=["health"])
+async def metrics(db: AsyncSession = Depends(get_db)):
+    """
+    Prometheus text-exposition endpoint. Combines HTTP-level metrics (accumulated
+    passively by the Instrumentator middleware above) with reliability gauges
+    refreshed from a live DB query on every scrape -- see app/core/metrics.py for
+    why those are gauges-refreshed-per-scrape rather than in-process counters.
+
+    Deliberately unauthenticated, matching standard Prometheus scrape conventions
+    (most scrapers can't do interactive auth) -- this endpoint must be
+    network-restricted at the deployment/ingress level, not exposed publicly. It
+    reveals aggregate operational counts (queue depth, worker health, latency), not
+    tenant data -- no event payloads, endpoint URLs, or other customer content ever
+    appear here.
+    """
+    await refresh_reliability_gauges(db)
+    return Response(content=generate_latest(REGISTRY), media_type=CONTENT_TYPE_LATEST)
