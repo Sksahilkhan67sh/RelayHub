@@ -9,6 +9,7 @@ from app.core.config import settings
 from app.core.error_handlers import register_error_handlers
 from app.core.health import check_database, check_redis
 from app.core.metrics import refresh_reliability_gauges
+from app.core.tracing import setup_tracing
 from app.db.session import get_db
 from app.middleware.body_size_limit import BodySizeLimitMiddleware
 from app.middleware.request_id import RequestIDMiddleware
@@ -64,6 +65,16 @@ register_error_handlers(app)
 # the reliability gauges (which share that same default registry) immediately
 # before rendering, and `.expose()` doesn't offer a hook for that.
 Instrumentator().instrument(app)
+
+# Distributed tracing (OTel follow-up -- see app/core/tracing.py's module
+# docstring). No-op with zero overhead when OTEL_EXPORTER_OTLP_ENDPOINT is unset
+# (the default everywhere that hasn't explicitly configured a collector, including
+# the test suite): setup_tracing returns None and FastAPIInstrumentor is never
+# called, so this app behaves exactly as it did before tracing existed.
+if setup_tracing("relayhub-api") is not None:
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+
+    FastAPIInstrumentor.instrument_app(app, excluded_urls="/health/live,/health/ready,/metrics")
 
 app.include_router(auth_router, prefix=settings.API_V1_PREFIX)
 app.include_router(org_router, prefix=settings.API_V1_PREFIX)
