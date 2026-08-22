@@ -235,3 +235,37 @@ async def test_export_csv_for_top_endpoints(client, unique_email):
     )
     assert resp.status_code == 200
     assert "endpoint_id,name,delivery_count" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_insights_alias_mirrors_analytics_for_ad_blocker_avoidance(client, unique_email):
+    """
+    Regression test: /v1/insights/* must be a true alias of /v1/analytics/*, not a
+    separate implementation, so the two can never silently drift apart. Added
+    because ad-blocker/privacy-extension filter lists commonly match the substring
+    "analytics" in first-party request URLs (net::ERR_BLOCKED_BY_CLIENT), which was
+    breaking the dashboard's own analytics page for some users -- the first-party
+    web app now calls /v1/insights/* instead, while /v1/analytics/* stays exactly
+    as published for the SDKs and API docs.
+    """
+    token = await register_and_get_token(client, unique_email)
+    await create_endpoint(client, token)
+
+    for path in ("summary", "events-by-type", "endpoint-health"):
+        analytics_resp = await client.get(f"/v1/analytics/{path}", headers={"Authorization": f"Bearer {token}"})
+        insights_resp = await client.get(f"/v1/insights/{path}", headers={"Authorization": f"Bearer {token}"})
+        assert analytics_resp.status_code == insights_resp.status_code == 200
+        assert analytics_resp.json() == insights_resp.json()
+
+
+@pytest.mark.asyncio
+async def test_insights_path_excluded_from_openapi_schema(client):
+    """
+    /v1/insights is an internal alias, not a second public API surface to document
+    -- only /v1/analytics should appear in the generated OpenAPI schema.
+    """
+    resp = await client.get("/openapi.json")
+    assert resp.status_code == 200
+    paths = resp.json()["paths"]
+    assert any(p.startswith("/v1/analytics/") for p in paths)
+    assert not any(p.startswith("/v1/insights/") for p in paths)
