@@ -236,6 +236,69 @@ together, proving the numbers come from actual rows), and
 `test_delivery_metrics_stuck_jobs_count` (a job artificially aged past the
 threshold is counted, proving the stuck-jobs read is live, not cached/fake).
 
+### 9. Follow-up — Prometheus metrics export, closing the "no export pipeline" gap
+
+**Background:** every earlier round of this phase noted the same gap in Remaining
+Risks: in-app metrics existed (queue depth, worker health, delivery latency/retry/
+DLQ rate) but nothing exposed them in a format an external monitoring stack could
+scrape. Auditing the dependency list turned up something not previously
+noticed: `prometheus-fastapi-instrumentator`, `opentelemetry-sdk`, and
+`opentelemetry-instrumentation-fastapi` were **already in `requirements.txt`** from
+an earlier phase, completely unwired — dead dependencies, with only an unused
+`OTEL_EXPORTER_OTLP_ENDPOINT` config placeholder alongside them. This closes the
+Prometheus half of that; OTel tracing remains unwired (see Remaining Risks).
+
+**Fix:** new `app/core/metrics.py` plus a `GET /metrics` route in `main.py`. Two
+kinds of metrics, both on the same endpoint and the same default `prometheus_client`
+registry, deliberately for different reasons:
+
+- **HTTP-level metrics** (request count, latency, in-progress) come from
+  `prometheus_fastapi_instrumentator`'s middleware (`Instrumentator().instrument(app)`
+  in `main.py`), accumulated in-process as the API serves real traffic — ordinary
+  Prometheus Counters/Histograms, correct because the process being scraped is the
+  same process handling the requests being measured.
+- **Reliability gauges** (queue depth by status, worker healthy/unhealthy counts,
+  delivery latency, retry rate, DLQ rate, stuck-jobs count) are `Gauge`s refreshed
+  from a live DB query (`refresh_reliability_gauges`) immediately before every
+  scrape, rather than accumulated as in-process counters. This is deliberate, not
+  an oversight: reconciliation and delivery execution happen in Celery worker
+  processes, not the FastAPI process serving `/metrics`. An in-memory `Counter`
+  incremented inside `reconcile_stuck_jobs` would only be visible to a scrape of
+  that specific worker process — and Celery workers don't serve HTTP at all, so
+  nothing would ever scrape them without a separate exporter or push-gateway,
+  which would be new infrastructure this pass deliberately avoided introducing.
+  Re-deriving these as gauges from the database on every scrape sidesteps the
+  cross-process problem entirely and reuses the exact same query functions
+  (`get_queue_depth`/`get_worker_health`/`get_delivery_metrics`) the JSON admin
+  endpoints already use — no new query logic, just copying their output onto
+  gauges. `None` values (no data in the window) correctly leave the gauge at its
+  last value rather than writing a misleading `0`, for the same reason
+  `get_delivery_metrics` distinguishes `None` from `0` in its JSON response.
+
+`/metrics` is deliberately unauthenticated, matching standard Prometheus scrape
+conventions (most scrapers can't do interactive auth) — documented in the route's
+docstring that this must be network-restricted at the deployment/ingress level, not
+exposed publicly. It reveals aggregate operational counts, never tenant data (no
+event payloads, endpoint URLs, or other customer content ever appear on it).
+
+**Verified for real, not just with the SQLite test suite:** PostgreSQL 16 and Redis
+were installed in this sandbox, the actual FastAPI app was booted with `uvicorn`
+against both, and `/metrics` was hit over real HTTP — confirmed HTTP 200, correct
+Prometheus text-exposition format, all `relayhub_*` gauges present alongside the
+Instrumentator's `http_requests_total`/histograms. A `delivery_jobs` row was then
+inserted directly into the real Postgres database (via `psql`, bypassing the app
+entirely) and a fresh `/metrics` scrape — no restart — correctly showed
+`relayhub_queue_depth{status="queued"} 1.0`, proving the scrape-time-refresh design
+actually reflects live database state end-to-end, not a cached or stale value. All
+test infrastructure (the Postgres database/user and the Redis process) was torn
+down afterward; nothing from this verification persists in the repository itself.
+
+Regression tests (SQLite, run as part of the normal suite):
+`test_metrics_endpoint_exposes_prometheus_text_format` (endpoint exists,
+unauthenticated, correct content-type, contains both HTTP-level and reliability
+metric names) and `test_metrics_reflect_real_queue_depth` (a real `DeliveryJob`
+created through the actual publish-event API flow shows up in the scraped output).
+
 ## Database
 
 Two migrations this phase, both additive-only (no changes to existing columns, no
@@ -369,22 +432,35 @@ endpoint — same authorization boundary as the rest of `admin/service.py`, not 
 one. The new `delivery-metrics` endpoint sits behind the same
 `require_platform_admin` dependency as every other route in this router.
 
+The new `/metrics` endpoint (Problem #9) is the one deliberate exception to
+"everything sits behind existing auth": it's intentionally unauthenticated, matching
+standard Prometheus scrape conventions, and its docstring says so explicitly along
+with the requirement to network-restrict it at the deployment/ingress level rather
+than expose it publicly. Checked what it actually reveals: aggregate counts only
+(queue depth by status, worker healthy/unhealthy counts, latency/rate numbers,
+standard HTTP request metrics) — no tenant IDs, no event payloads, no endpoint URLs,
+no customer content of any kind. This is a real, intentional trade-off worth the
+person's awareness, not an oversight — flagged again in Remaining Risks below.
+
 ## Observability
 
 Added structured `logger.warning` calls in `reconcile_stuck_jobs` (when anything is
 recovered) and in the queue-dispatch-failure paths (problems #2/#3/#4), so operators
 can see reconciliation activity and dispatch failures in logs. Also added: real
-worker-fleet liveness surfaced through `system-health` (Problem #6), and real
-delivery-latency/retry-rate/DLQ-rate/stuck-jobs metrics surfaced through the new
-`delivery-metrics` endpoint (Problem #8) — both are genuine new observability
-signals, not just log lines, and together close most of what Phase 2 section 16
-("Observability") and section 9 ("Worker Health") ask for.
+worker-fleet liveness surfaced through `system-health` (Problem #6), real
+delivery-latency/retry-rate/DLQ-rate/stuck-jobs metrics surfaced through the
+`delivery-metrics` endpoint (Problem #8), and — closing the last major piece —
+a Prometheus-scrapeable `/metrics` endpoint (Problem #9) exposing both HTTP-level
+metrics and all of the above reliability gauges in a format an external monitoring
+stack can actually consume, verified end-to-end against a real running instance
+(see Problem #9 for the full verification). Together these close what Phase 2
+section 16 ("Observability") and section 9 ("Worker Health") ask for.
 
-Still **not** added: Prometheus/OTel metrics export — `OTEL_EXPORTER_OTLP_ENDPOINT`
-exists as an unused config setting from before this phase; no metrics-export
-instrumentation exists anywhere in this codebase yet, and wiring one up from scratch
-remains judged out of scope for a reliability-focused pass with an already very
-large surface. This is a real, documented gap, not a silent omission.
+Still **not** added: OpenTelemetry tracing export. `opentelemetry-sdk` and
+`opentelemetry-instrumentation-fastapi` remain in `requirements.txt` unwired (same
+as before this phase), and `OTEL_EXPORTER_OTLP_ENDPOINT` remains an unused config
+placeholder — only the Prometheus metrics half of the "metrics/tracing export" gap
+was closed this round, not tracing. See Remaining Risks.
 
 ## Chaos Testing
 
@@ -414,6 +490,9 @@ Tested directly, with real (not simulated-in-prose) code:
 | Delivery-metrics with zero data (no divide-by-zero, correct nulls) | **PASS** — `test_delivery_metrics_empty_state` |
 | Delivery-metrics reflect a real successful delivery | **PASS** — `test_delivery_metrics_reflects_real_deliveries` |
 | Delivery-metrics stuck-jobs count is live, not cached | **PASS** — `test_delivery_metrics_stuck_jobs_count` |
+| `/metrics` endpoint exists, unauthenticated, correct Prometheus format, contains both HTTP and reliability metrics | **PASS** — `test_metrics_endpoint_exposes_prometheus_text_format` |
+| `/metrics` reflects a real `DeliveryJob` created through the actual API | **PASS** — `test_metrics_reflect_real_queue_depth` |
+| `/metrics` against a real running instance (Postgres + Redis + uvicorn), scraped over real HTTP | **PASS** — verified manually this round (see Problem #9); a directly-inserted Postgres row appeared in a fresh scrape with no restart, confirming the scrape-time-refresh design works end-to-end, not just against the SQLite test suite |
 | Redis fully unavailable for an extended period (not just one call) | **Not tested** — see Remaining Risks |
 | Database connection pool exhaustion | **Not tested** — see Remaining Risks |
 | Large queue backlog / load test | **Not tested** — see Remaining Risks |
@@ -421,7 +500,7 @@ Tested directly, with real (not simulated-in-prose) code:
 ## Tests
 
 ```
-Full backend suite: 259/259 passing (238 original baseline + 21 new)
+Full backend suite: 261/261 passing (238 original baseline + 23 new)
   - New: tests/integration/test_reconciliation.py (10 tests total: 6 from the
     initial reconciliation work + 4 lease-specific tests)
   - New: 2 tests added to tests/integration/test_events.py / test_retry_engine.py
@@ -433,26 +512,28 @@ Full backend suite: 259/259 passing (238 original baseline + 21 new)
     idempotency)
   - New: 3 tests added to test_admin.py (delivery-metrics: empty state, real
     deliveries, stuck-jobs count)
+  - New: 2 tests added to test_health_and_headers.py (/metrics endpoint format and
+    real-data reflection)
 ```
 
 ## Verification
 
 ```
-Typecheck (mypy app/):        PASS — 0 issues, 111 files
+Typecheck (mypy app/):        PASS — 0 issues, 112 files
 Lint (ruff, files touched):   PASS — 0 issues in every app/ and tests/ file modified
-                               across all four rounds of this phase. Both new
+                               across all five rounds of this phase. Both new
                                migration files (0014, 0015) carry the same
                                import-ordering style finding (I001) present in
                                EVERY existing migration file 0001-0013 — confirmed
                                by running ruff against the full alembic/ directory
                                — left as-is to stay consistent with the established
                                convention rather than fixing it in isolation on the
-                               new files only. As a side effect of this round's edit
-                               to test_admin.py, one pre-existing baseline
-                               unused-import finding in that file was also resolved
-                               (not the point of the change, just a consequence of
-                               reusing an already-imported name instead of
-                               re-importing it locally).
+                               new files only. As a side effect of an earlier
+                               round's edit to test_admin.py, one pre-existing
+                               baseline unused-import finding in that file was also
+                               resolved (not the point of the change, just a
+                               consequence of reusing an already-imported name
+                               instead of re-importing it locally).
 Lint (ruff, full app+tests):  5 pre-existing findings remain in app/+tests/, all in
                                files NOT touched this phase (test_alerts.py,
                                test_delivery_executor.py, test_delivery_logs.py,
@@ -460,7 +541,7 @@ Lint (ruff, full app+tests):  5 pre-existing findings remain in app/+tests/, all
                                imports) — confirmed pre-existing, not introduced.
                                Separately, pre-existing findings across every file
                                in alembic/versions/ (see above) — same story.
-Full test suite:              PASS — 259/259 (SQLite, as before)
+Full test suite:              PASS — 261/261 (SQLite, as before)
 Migration:                    PASS — verified against a real PostgreSQL 16 instance
                                this round: fresh-database `alembic upgrade head`
                                (all 15 migrations, 0001-0015, applied cleanly), a
@@ -501,15 +582,19 @@ Being direct, as instructed — this is not a zero-risk system after this pass:
    worker process starts via `worker_process_init`, surfaced through
    `get_system_health`'s new `worker_health` field, and (as of item 1 above) also
    consumed directly by `reconcile_stuck_jobs` for per-job lease checks.
-4. **Partially addressed — in-app metrics exist, but no export pipeline.**
-   `get_delivery_metrics()` / `GET /admin/delivery-metrics` (Problem #8) now surface
-   real delivery latency, retry rate, DLQ rate, and stuck-job counts — closing the
-   "no visibility at all" version of this gap. What's still missing is
-   Prometheus/OTel *export*: nothing in this codebase pushes or exposes these in a
-   scrape/collector-compatible format, so an external monitoring stack still can't
-   consume them without polling this admin endpoint and adapting the shape itself.
-   `OTEL_EXPORTER_OTLP_ENDPOINT` remains an unused config placeholder from an
-   earlier phase.
+4. **Fixed — Prometheus export exists; OTel tracing still doesn't.**
+   `get_delivery_metrics()` / `GET /admin/delivery-metrics` (Problem #8) surface
+   real delivery latency, retry rate, DLQ rate, and stuck-job counts as JSON; `GET
+   /metrics` (Problem #9) now exposes those same numbers plus HTTP-level request
+   metrics in Prometheus text-exposition format, verified end-to-end against a real
+   running instance (Postgres + Redis + uvicorn), not just the test suite. An
+   external monitoring stack can now scrape this directly — closing the actual
+   "no export pipeline" gap. What's still missing: OpenTelemetry *tracing* export.
+   `opentelemetry-sdk` and `opentelemetry-instrumentation-fastapi` remain in
+   `requirements.txt`, unwired, same as before this phase; `OTEL_EXPORTER_OTLP_ENDPOINT`
+   remains an unused config placeholder. Distributed tracing (request-level spans
+   across the API → queue → worker → delivery boundary) is a meaningfully different
+   feature from the metrics work done here and wasn't attempted.
 5. ~~DLQ concurrent-double-retry (reasoned through as safe, not given its own
    test).~~ **Fixed** — `test_double_retry_of_same_dlq_job_is_safe` now covers it
    directly.
@@ -540,12 +625,24 @@ Being direct, as instructed — this is not a zero-risk system after this pass:
    this round's verification was standalone scripts run once, not a new CI tier.
    If you want ongoing Postgres-backed CI, that's a separate decision about test
    infrastructure.
+9. **`/metrics` is unauthenticated by design** (standard Prometheus scrape
+   convention — most scrapers can't do interactive auth), which means it must be
+   network-restricted at the deployment/ingress level before going to production;
+   this codebase has no ingress/network-policy layer of its own to enforce that, so
+   it's on whoever deploys this to configure. The endpoint only reveals aggregate
+   counts (queue depth, worker health, latency/rate numbers, standard HTTP request
+   metrics) — never tenant data — but "never tenant data" is not the same
+   guarantee as "safe to expose publicly": aggregate operational metrics can still
+   leak business signal (e.g. approximate request volume) to anyone who can reach
+   the endpoint.
 
 **Not claiming:** "100% failure-proof," "zero risk," or that all 28 sections of the
 brief were exhaustively implemented. What's true: the one critical silent-loss bug
 found (abandoned mid-processing jobs) is fixed and regression-tested; every
 broker-dispatch-failure gap found (5 call sites total, across two rounds) is fixed
 and regression-tested; DLQ duplicate-retry safety is now verified rather than
-reasoned-about; worker-fleet liveness moved from an honest gap to a real,
-tested feature; and both new migrations are now verified against real PostgreSQL,
-not just structurally. What's still open is listed above, not glossed over.
+reasoned-about; worker-fleet liveness moved from an honest gap to a real, tested
+feature; both new migrations are verified against real PostgreSQL, not just
+structurally; and Prometheus metrics export now exists and was verified against a
+real running instance end-to-end. What's still open is listed above, not glossed
+over.
