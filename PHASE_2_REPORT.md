@@ -244,15 +244,44 @@ backfill needed):
 - `0015_delivery_job_claim_lease.py` — two new nullable columns on `delivery_jobs`
   (`claimed_by_worker_id`, `claimed_at`) plus an index on the former.
 
-Neither could be run against a real Postgres in this sandbox (no Postgres instance
-available here, same limitation as the missing git repo noted in the original
-report) — both were verified by import/structural check and by matching the exact
-column-definition pattern of migrations `0001`–`0013`, and the corresponding
-SQLAlchemy model changes were exercised indirectly through the full test suite
-(which uses SQLite `create_all`, not these migration files, to build its schema).
-Recommend running `alembic upgrade head` against a real Postgres instance, and
-ideally exercising `downgrade` then `upgrade` again for both, as part of your own
-deploy process before relying on this.
+**Now verified against a real PostgreSQL 16 instance**, not just structurally. A
+Postgres 16 server was installed and started in this sandbox specifically to close
+this gap:
+
+- `alembic upgrade head` run against a **fresh, empty database**: all 15 migrations
+  (`0001`–`0015`) applied cleanly in order, including both new ones, with no errors.
+- Schema inspected directly via `psql \d`: `worker_heartbeats` has exactly the
+  columns/types/indexes the model declares (including the `UNIQUE` index on
+  `worker_id`); `delivery_jobs` has the two new nullable lease columns and the new
+  index on `claimed_by_worker_id`.
+- **Downgrade/upgrade round-trip**: `alembic downgrade 0013` cleanly dropped both
+  the lease columns and the entire `worker_heartbeats` table (confirmed via `\d`
+  showing them gone), then `alembic upgrade head` cleanly re-applied both — a full
+  round-trip with no errors in either direction.
+- **ORM logic exercised directly against real Postgres** (not SQLite) for the
+  pieces most likely to behave differently between the two: `upsert_worker_heartbeat`
+  / `get_worker_health` (confirmed healthy/stale classification and upsert
+  idempotency, and confirmed Postgres returns proper tz-aware `datetime`s so the
+  SQLite-only naive-datetime workaround in that code is inert here, as intended);
+  `_claim_job`'s CAS logic (confirmed a second concurrent claim attempt is rejected
+  with `JobAlreadyClaimedError` and does not overwrite the original claim's lease
+  fields); and the full `reconcile_stuck_jobs` lease-vs-time-heuristic decision
+  logic end-to-end against real `DeliveryJob`/`WorkerHeartbeat` rows with real
+  foreign-key constraints (organization → endpoint → event → delivery_job) — all
+  three scenarios (worker alive → left alone, worker confirmed dead → recovered
+  fast via lease, no lease signal → time-heuristic fallback) produced identical
+  results to the SQLite-based automated test suite.
+
+Not done: the pytest suite itself still runs against SQLite (`tests/conftest.py`
+hardcodes `sqlite+aiosqlite:///:memory:` for speed and zero external dependencies)
+— that's an existing, deliberate project choice from before this phase, not
+something this pass changed. The verification above was done as targeted,
+standalone scripts exercising the same code paths directly against Postgres,
+specifically to catch anything the SQLite-based suite could mask (tz-naive
+datetimes being the known example — confirmed a non-issue). If you want an
+ongoing Postgres-backed test tier in CI rather than one-off verification, that's a
+larger, separate decision about the test suite's architecture, not something folded
+into this fix.
 
 `reconcile_stuck_jobs`' stuck-processing detection (problem #1) now checks the new
 lease columns first and only falls back to the `DeliveryJob.updated_at` time
@@ -431,15 +460,18 @@ Lint (ruff, full app+tests):  5 pre-existing findings remain in app/+tests/, all
                                imports) — confirmed pre-existing, not introduced.
                                Separately, pre-existing findings across every file
                                in alembic/versions/ (see above) — same story.
-Full test suite:              PASS — 259/259
-Migration:                    Two additive migrations this phase overall:
-                               0014_worker_heartbeats.py and
-                               0015_delivery_job_claim_lease.py. Neither could be
-                               run against a real Postgres in this sandbox (none
-                               available); both verified structurally instead (see
-                               Database section above). Recommend running both for
-                               real, including a downgrade/upgrade round-trip, as
-                               part of your deploy process.
+Full test suite:              PASS — 259/259 (SQLite, as before)
+Migration:                    PASS — verified against a real PostgreSQL 16 instance
+                               this round: fresh-database `alembic upgrade head`
+                               (all 15 migrations, 0001-0015, applied cleanly), a
+                               full `downgrade 0013` → `upgrade head` round-trip for
+                               both new migrations (confirmed via `\d` that the
+                               downgrade actually dropped the table/columns and the
+                               re-upgrade restored them), and direct ORM-level
+                               verification of the heartbeat, CAS-claim, and
+                               lease-based reconciliation logic against real
+                               Postgres rows with real foreign-key constraints (see
+                               Database section above for full detail).
 Production build:             Not re-run (frontend untouched this phase; backend has
                                no separate "build" step beyond the test/lint/typecheck
                                above)
@@ -496,13 +528,18 @@ Being direct, as instructed — this is not a zero-risk system after this pass:
    be performed as a real commit — noting this rather than silently skipping it.
    Recommend the person track this change through their normal git workflow via a
    diff/PR from these files rather than treating this as a substitute for one.
-8. **Neither new migration was run against a real database.** No Postgres instance
-   was available in this sandbox. Both migration files were checked structurally
-   (import cleanly, match the exact column-definition pattern of every prior
-   migration) and the corresponding model changes were exercised through the full
-   test suite — but that suite runs against SQLite via `create_all`, which does not
-   go through Alembic at all. Run `alembic upgrade head` (and ideally `downgrade`
-   then `upgrade` again) against a real Postgres instance before deploying this.
+8. ~~Neither new migration was run against a real database.~~ **Fixed** —
+   PostgreSQL 16 was installed in this sandbox specifically to close this gap. Both
+   migrations were run for real: a fresh-database `upgrade head` through all 15
+   migrations, a `downgrade`/`upgrade` round-trip for both new ones (confirmed via
+   direct schema inspection, not just exit codes), and direct ORM-level exercises of
+   the heartbeat, CAS-claim, and lease-reconciliation logic against real Postgres
+   rows and constraints — not just SQLite. See the Database section above for full
+   detail. What's still true: the pytest suite itself continues to run against
+   SQLite by design (existing, pre-phase choice, not something this pass changed) —
+   this round's verification was standalone scripts run once, not a new CI tier.
+   If you want ongoing Postgres-backed CI, that's a separate decision about test
+   infrastructure.
 
 **Not claiming:** "100% failure-proof," "zero risk," or that all 28 sections of the
 brief were exhaustively implemented. What's true: the one critical silent-loss bug
@@ -510,4 +547,5 @@ found (abandoned mid-processing jobs) is fixed and regression-tested; every
 broker-dispatch-failure gap found (5 call sites total, across two rounds) is fixed
 and regression-tested; DLQ duplicate-retry safety is now verified rather than
 reasoned-about; worker-fleet liveness moved from an honest gap to a real,
-tested feature. What's still open is listed above, not glossed over.
+tested feature; and both new migrations are now verified against real PostgreSQL,
+not just structurally. What's still open is listed above, not glossed over.
