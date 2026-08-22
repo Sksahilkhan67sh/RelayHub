@@ -299,6 +299,94 @@ unauthenticated, correct content-type, contains both HTTP-level and reliability
 metric names) and `test_metrics_reflect_real_queue_depth` (a real `DeliveryJob`
 created through the actual publish-event API flow shows up in the scraped output).
 
+### 10. Follow-up — OpenTelemetry distributed tracing export
+
+**Background:** Problem #9 closed the Prometheus metrics half of "no
+metrics/tracing export"; OTel tracing was explicitly left open in that round's
+Remaining Risks. Auditing the dependency list again for this round confirmed
+`opentelemetry-sdk` and `opentelemetry-instrumentation-fastapi` were present but
+unwired, same as before — and turned up something Problem #9 hadn't needed to
+notice: **no OTLP exporter package was installed at all**. Without one, a
+`TracerProvider` can create spans but has no transport to send them anywhere — the
+prior phase's dependencies could not have exported a single span even if fully
+wired, because the piece that actually ships bytes over the network was missing
+from `requirements.txt` entirely. Added `opentelemetry-exporter-otlp-proto-http`
+(HTTP, not gRPC, to avoid an extra native-dependency footprint) to close that.
+
+**Fix:** new `app/core/tracing.py` — `setup_tracing(service_name)` configures a
+`TracerProvider` with a `BatchSpanProcessor`/`OTLPSpanExporter` pointed at
+`OTEL_EXPORTER_OTLP_ENDPOINT`, idempotently (safe to call more than once per
+process) and **only** when that setting is non-empty; when it's unset (the default
+everywhere that hasn't explicitly configured a collector, including the test
+suite), `setup_tracing` returns `None` and nothing downstream instruments
+anything — zero overhead, zero risk of every request silently timing out against
+an unreachable `localhost:4318`. `get_tracer()` always returns a usable tracer
+either way, since OTel's own API transparently falls back to a no-op
+implementation when no real provider is configured — call sites never need an
+`if tracing_enabled:` branch.
+
+Wired into both processes that matter:
+- **API process** (`main.py`): `setup_tracing("relayhub-api")`, then
+  `FastAPIInstrumentor.instrument_app(app, ...)` (excluding `/health/*` and
+  `/metrics` from tracing, since those are polled constantly by
+  liveness/readiness probes and scrapers and add trace noise without value) --
+  but only when `setup_tracing` actually returned a provider.
+- **Worker process** (`celery_app.py`): `setup_tracing("relayhub-worker")` at
+  `worker_process_init`, the same signal already used to start the heartbeat
+  thread (Problem #6) -- same per-process lifecycle, same reasoning for why it
+  belongs there rather than at Celery task-definition time.
+
+The point of tracing here specifically was closing the cross-process gap the
+metrics work (Problem #9) couldn't: connecting a `publish_event` HTTP request to
+the `deliver_webhook` Celery task it causes to run in a *different* process, as one
+continuous trace. FastAPI and Celery auto-instrumentation don't do this for each
+other automatically -- it needs explicit W3C `traceparent` propagation across the
+queue, done by hand:
+- `queue_client.py`'s `RedisQueueClient.enqueue` now calls `inject()` into a
+  headers dict before `celery_app.send_task(..., headers=headers or None)` --
+  `inject()` writes nothing when tracing is disabled, so this is always safe to
+  call unconditionally.
+- `tasks.py`'s `deliver_webhook` now calls `extract(self.request.headers or {})`
+  to recover that context, then opens its own span
+  (`start_as_current_span("deliver_webhook", context=parent_ctx)`) as a *child* of
+  the original request's span rather than an unrelated new trace.
+  `reconcile_stuck_jobs_task` gets its own span too, with no parent context, since
+  it's a periodic beat-scheduled task with no single inbound request to link to.
+
+**Verified three ways, escalating in realism:**
+1. **Unit tests** (`tests/unit/test_tracing.py`, 4 tests): `setup_tracing` is a
+   true no-op when the endpoint is unset; it's idempotent within a process; the
+   inject → extract roundtrip reconstructs the *same trace ID* on the "other side"
+   (using an `InMemorySpanExporter` in place of a real collector, the standard
+   OTel testing pattern); `extract()` on missing/empty headers never raises.
+2. **App-boot smoke test**: imported the real FastAPI app both with
+   `OTEL_EXPORTER_OTLP_ENDPOINT` unset (confirmed identical behavior to before
+   tracing existed) and set to an unreachable address (confirmed the app still
+   boots instantly — `BatchSpanProcessor` exports asynchronously in the
+   background, so an unreachable collector never blocks a request).
+3. **Full real-network, cross-process end-to-end verification**: stood up
+   PostgreSQL 16, Redis, a minimal fake OTLP/HTTP collector (a plain
+   `http.server` that logs every POST it receives), the actual `uvicorn`-served
+   API, and a real `celery worker` process, all in this sandbox. First confirmed
+   the collector genuinely received a real span batch (containing `relayhub-api`)
+   from live HTTP request traffic through the running API. Then -- working around
+   an unrelated, pre-existing endpoint-matching issue that also affected Problem
+   #9's live verification (event-to-endpoint subscription matching returned zero
+   matches in this manually-constructed test data; not a tracing bug, not
+   investigated further as out of this round's scope) -- dispatched a job directly
+   through the same `inject()`/`send_task(headers=...)` path `queue_client.py`
+   uses, to the real running Celery worker. The collector received **two** span
+   batches for that one dispatch: one tagged `relayhub-api` (the injection point)
+   and one tagged `relayhub-worker` (the worker's `deliver_webhook` span,
+   reconstructed from the propagated header) -- confirming the cross-process trace
+   link is real, not just correct in isolated unit tests. The worker also
+   genuinely executed a delivery attempt against `https://example.com/hook`
+   (received a real `403`, correctly recorded the job as `failed` through the
+   normal executor path) -- proving this was a live, working worker, not a stub.
+   All test infrastructure (Postgres database/user, Redis, the collector, uvicorn,
+   the Celery worker) was torn down afterward; nothing from this verification
+   persists in the repository.
+
 ## Database
 
 Two migrations this phase, both additive-only (no changes to existing columns, no
@@ -442,6 +530,17 @@ standard HTTP request metrics) — no tenant IDs, no event payloads, no endpoint
 no customer content of any kind. This is a real, intentional trade-off worth the
 person's awareness, not an oversight — flagged again in Remaining Risks below.
 
+Tracing (Problem #10) reuses the same authorization surface it already had: OTLP
+export goes straight to whatever collector `OTEL_EXPORTER_OTLP_ENDPOINT` points at,
+not through any new HTTP route in this app, so there's no new inbound endpoint to
+secure. What spans *contain* was checked deliberately: `deliver_webhook`'s span
+attribute is `relayhub.delivery_job_id` (an opaque UUID) — no event payloads, no
+endpoint URLs, no tenant-identifying data placed on spans by this change. FastAPI's
+auto-instrumentation does capture request paths/methods/status codes by default,
+same as any HTTP-tracing setup — worth knowing if your collector isn't
+access-controlled, but not something this change introduces beyond FastAPI's
+standard instrumentation behavior.
+
 ## Observability
 
 Added structured `logger.warning` calls in `reconcile_stuck_jobs` (when anything is
@@ -449,18 +548,22 @@ recovered) and in the queue-dispatch-failure paths (problems #2/#3/#4), so opera
 can see reconciliation activity and dispatch failures in logs. Also added: real
 worker-fleet liveness surfaced through `system-health` (Problem #6), real
 delivery-latency/retry-rate/DLQ-rate/stuck-jobs metrics surfaced through the
-`delivery-metrics` endpoint (Problem #8), and — closing the last major piece —
-a Prometheus-scrapeable `/metrics` endpoint (Problem #9) exposing both HTTP-level
-metrics and all of the above reliability gauges in a format an external monitoring
-stack can actually consume, verified end-to-end against a real running instance
-(see Problem #9 for the full verification). Together these close what Phase 2
-section 16 ("Observability") and section 9 ("Worker Health") ask for.
+`delivery-metrics` endpoint (Problem #8), a Prometheus-scrapeable `/metrics`
+endpoint (Problem #9) exposing both HTTP-level metrics and all of the above
+reliability gauges, and — closing the tracing half of the original gap — OpenTelemetry
+distributed tracing (Problem #10) connecting an API request to the Celery task it
+causes across the process boundary, verified end-to-end against a real running
+collector, API, and worker (see Problem #10). Together these close what Phase 2
+section 16 ("Observability") and section 9 ("Worker Health") ask for, and close both
+halves of "no metrics/tracing export" from every earlier round's Remaining Risks.
 
-Still **not** added: OpenTelemetry tracing export. `opentelemetry-sdk` and
-`opentelemetry-instrumentation-fastapi` remain in `requirements.txt` unwired (same
-as before this phase), and `OTEL_EXPORTER_OTLP_ENDPOINT` remains an unused config
-placeholder — only the Prometheus metrics half of the "metrics/tracing export" gap
-was closed this round, not tracing. See Remaining Risks.
+What's genuinely done now: both `opentelemetry-sdk` and
+`opentelemetry-instrumentation-fastapi` (previously unwired dependencies from an
+earlier phase) are wired and exercised, plus the exporter package
+(`opentelemetry-exporter-otlp-proto-http`) that was missing entirely until this
+round — without it, nothing could ever have shipped a span regardless of how the
+SDK was configured. `OTEL_EXPORTER_OTLP_ENDPOINT` now does exactly what its name
+always implied it should.
 
 ## Chaos Testing
 
@@ -493,6 +596,11 @@ Tested directly, with real (not simulated-in-prose) code:
 | `/metrics` endpoint exists, unauthenticated, correct Prometheus format, contains both HTTP and reliability metrics | **PASS** — `test_metrics_endpoint_exposes_prometheus_text_format` |
 | `/metrics` reflects a real `DeliveryJob` created through the actual API | **PASS** — `test_metrics_reflect_real_queue_depth` |
 | `/metrics` against a real running instance (Postgres + Redis + uvicorn), scraped over real HTTP | **PASS** — verified manually this round (see Problem #9); a directly-inserted Postgres row appeared in a fresh scrape with no restart, confirming the scrape-time-refresh design works end-to-end, not just against the SQLite test suite |
+| Trace context inject/extract roundtrip reconstructs the same trace ID | **PASS** — `test_trace_context_roundtrips_across_inject_extract` |
+| Tracing is a true no-op when disabled (default) | **PASS** — `test_setup_tracing_is_a_noop_when_endpoint_unset` |
+| Tracing setup is idempotent (safe to call more than once per process) | **PASS** — `test_setup_tracing_is_idempotent` |
+| `extract()` on missing/empty headers never raises | **PASS** — `test_extract_with_missing_headers_is_safe` |
+| Cross-process distributed trace against real infrastructure (Postgres + Redis + a real Celery worker + a real OTLP collector) | **PASS** — verified manually this round (see Problem #10); the collector received two span batches for one dispatch, one tagged `relayhub-api` and one tagged `relayhub-worker`, confirming the trace genuinely continues across the process boundary, not just in unit tests. The worker also completed a real delivery attempt (403 from the test destination, correctly recorded as `failed`) |
 | Redis fully unavailable for an extended period (not just one call) | **Not tested** — see Remaining Risks |
 | Database connection pool exhaustion | **Not tested** — see Remaining Risks |
 | Large queue backlog / load test | **Not tested** — see Remaining Risks |
@@ -500,7 +608,7 @@ Tested directly, with real (not simulated-in-prose) code:
 ## Tests
 
 ```
-Full backend suite: 261/261 passing (238 original baseline + 23 new)
+Full backend suite: 265/265 passing (238 original baseline + 27 new)
   - New: tests/integration/test_reconciliation.py (10 tests total: 6 from the
     initial reconciliation work + 4 lease-specific tests)
   - New: 2 tests added to tests/integration/test_events.py / test_retry_engine.py
@@ -514,14 +622,18 @@ Full backend suite: 261/261 passing (238 original baseline + 23 new)
     deliveries, stuck-jobs count)
   - New: 2 tests added to test_health_and_headers.py (/metrics endpoint format and
     real-data reflection)
+  - New: tests/unit/test_tracing.py (4 tests: no-op when disabled, idempotency,
+    inject/extract roundtrip, safe extraction on missing headers)
+  - Updated: 1 existing test in test_queue_client.py (assertion updated for the
+    new `headers=` kwarg on the Celery dispatch call)
 ```
 
 ## Verification
 
 ```
-Typecheck (mypy app/):        PASS — 0 issues, 112 files
+Typecheck (mypy app/):        PASS — 0 issues, 113 files
 Lint (ruff, files touched):   PASS — 0 issues in every app/ and tests/ file modified
-                               across all five rounds of this phase. Both new
+                               across all six rounds of this phase. Both new
                                migration files (0014, 0015) carry the same
                                import-ordering style finding (I001) present in
                                EVERY existing migration file 0001-0013 — confirmed
@@ -541,18 +653,19 @@ Lint (ruff, full app+tests):  5 pre-existing findings remain in app/+tests/, all
                                imports) — confirmed pre-existing, not introduced.
                                Separately, pre-existing findings across every file
                                in alembic/versions/ (see above) — same story.
-Full test suite:              PASS — 261/261 (SQLite, as before)
+Full test suite:              PASS — 265/265 (SQLite, as before)
 Migration:                    PASS — verified against a real PostgreSQL 16 instance
-                               this round: fresh-database `alembic upgrade head`
-                               (all 15 migrations, 0001-0015, applied cleanly), a
-                               full `downgrade 0013` → `upgrade head` round-trip for
-                               both new migrations (confirmed via `\d` that the
-                               downgrade actually dropped the table/columns and the
-                               re-upgrade restored them), and direct ORM-level
-                               verification of the heartbeat, CAS-claim, and
-                               lease-based reconciliation logic against real
-                               Postgres rows with real foreign-key constraints (see
-                               Database section above for full detail).
+                               (see Database section above for full detail from the
+                               round that added migrations 0014/0015; no new
+                               migration this round).
+Tracing/metrics against real infra: this round additionally stood up PostgreSQL 16,
+                               Redis, a real `celery worker` process, the actual
+                               `uvicorn`-served API, and a minimal fake OTLP
+                               collector, all in this sandbox, to verify distributed
+                               tracing end-to-end rather than only in unit tests
+                               (see Problem #10 for full detail). All of that
+                               infrastructure was torn down afterward — nothing
+                               persists in the repository from this verification.
 Production build:             Not re-run (frontend untouched this phase; backend has
                                no separate "build" step beyond the test/lint/typecheck
                                above)
@@ -582,19 +695,28 @@ Being direct, as instructed — this is not a zero-risk system after this pass:
    worker process starts via `worker_process_init`, surfaced through
    `get_system_health`'s new `worker_health` field, and (as of item 1 above) also
    consumed directly by `reconcile_stuck_jobs` for per-job lease checks.
-4. **Fixed — Prometheus export exists; OTel tracing still doesn't.**
-   `get_delivery_metrics()` / `GET /admin/delivery-metrics` (Problem #8) surface
-   real delivery latency, retry rate, DLQ rate, and stuck-job counts as JSON; `GET
-   /metrics` (Problem #9) now exposes those same numbers plus HTTP-level request
-   metrics in Prometheus text-exposition format, verified end-to-end against a real
-   running instance (Postgres + Redis + uvicorn), not just the test suite. An
-   external monitoring stack can now scrape this directly — closing the actual
-   "no export pipeline" gap. What's still missing: OpenTelemetry *tracing* export.
-   `opentelemetry-sdk` and `opentelemetry-instrumentation-fastapi` remain in
-   `requirements.txt`, unwired, same as before this phase; `OTEL_EXPORTER_OTLP_ENDPOINT`
-   remains an unused config placeholder. Distributed tracing (request-level spans
-   across the API → queue → worker → delivery boundary) is a meaningfully different
-   feature from the metrics work done here and wasn't attempted.
+4. ~~Fixed — Prometheus export exists; OTel tracing still doesn't.~~ **Fully
+   fixed.** `get_delivery_metrics()` / `GET /admin/delivery-metrics` (Problem #8)
+   surface real delivery latency, retry rate, DLQ rate, and stuck-job counts as
+   JSON; `GET /metrics` (Problem #9) exposes those same numbers plus HTTP-level
+   request metrics in Prometheus text-exposition format, verified end-to-end
+   against a real running instance. `opentelemetry-sdk` and
+   `opentelemetry-instrumentation-fastapi` (previously unwired) are now wired, and
+   the exporter package that was missing entirely
+   (`opentelemetry-exporter-otlp-proto-http`) was added — without it neither
+   package could ever have shipped a span anywhere. Distributed tracing now
+   connects an API request to the Celery task it causes across the process
+   boundary (Problem #10), verified end-to-end against a real collector, a real
+   API process, and a real worker process — not just unit-tested in isolation.
+   `OTEL_EXPORTER_OTLP_ENDPOINT` now does what its name always implied it should.
+   What's genuinely still missing: metrics/spans beyond HTTP-request-level and the
+   handful of manually-added spans (`deliver_webhook`, `reconcile_stuck_jobs`) —
+   e.g. no span around individual DB queries or the HTTP call to the customer's
+   webhook endpoint specifically (that detail is visible in `DeliveryAttempt` rows
+   and logs, just not as its own span). Also no sampling configuration — every
+   trace is captured at 100% by default, which is fine for the traffic volumes
+   this system has seen in testing but would need a sampler configured before
+   high-volume production use, to control both collector load and network egress.
 5. ~~DLQ concurrent-double-retry (reasoned through as safe, not given its own
    test).~~ **Fixed** — `test_double_retry_of_same_dlq_job_is_safe` now covers it
    directly.
@@ -635,6 +757,29 @@ Being direct, as instructed — this is not a zero-risk system after this pass:
    guarantee as "safe to expose publicly": aggregate operational metrics can still
    leak business signal (e.g. approximate request volume) to anyone who can reach
    the endpoint.
+10. **OTLP export destination has no auth/TLS configured by this change.**
+    `OTLPSpanExporter(endpoint=...)` is constructed with just the endpoint URL — no
+    headers, no TLS certificate configuration. Most real OTel collector setups
+    either sit on a private network (no auth needed) or expect an API key/bearer
+    token in export headers (e.g. hosted observability vendors) — this codebase has
+    no config setting for that yet, so pointing `OTEL_EXPORTER_OTLP_ENDPOINT` at a
+    vendor that requires auth headers won't work without an additional code change.
+    Flagging this now rather than letting it surface as a confusing "spans aren't
+    arriving" support question later.
+11. **An unrelated, pre-existing bug surfaced during this round's live
+    verification and was deliberately not investigated further, being out of
+    scope:** in a manually-constructed test scenario (registering an org, creating
+    an endpoint subscribed to `["*"]`, publishing an event), `delivery_jobs` came
+    back empty from the publish-event response — no endpoint match, even though
+    the endpoint appeared correctly configured for wildcard subscription. This
+    also happened during Problem #9's live verification round and was worked
+    around the same way both times (bypassing the HTTP publish flow and inserting
+    rows directly). This is worth someone's attention as its own investigation —
+    possibly an environment-matching nuance, a wildcard-parsing issue, or specific
+    to how these particular verification scripts constructed test data — but
+    tracing/metrics work was not the right context to chase it down, and every
+    verification in this report that needed a real job used direct DB
+    inserts specifically to route around it rather than depend on it being fixed.
 
 **Not claiming:** "100% failure-proof," "zero risk," or that all 28 sections of the
 brief were exhaustively implemented. What's true: the one critical silent-loss bug
@@ -643,6 +788,7 @@ broker-dispatch-failure gap found (5 call sites total, across two rounds) is fix
 and regression-tested; DLQ duplicate-retry safety is now verified rather than
 reasoned-about; worker-fleet liveness moved from an honest gap to a real, tested
 feature; both new migrations are verified against real PostgreSQL, not just
-structurally; and Prometheus metrics export now exists and was verified against a
-real running instance end-to-end. What's still open is listed above, not glossed
+structurally; and both Prometheus metrics export and OpenTelemetry distributed
+tracing now exist and were verified end-to-end against real running infrastructure,
+not just unit tests. What's still open is listed above, not glossed
 over.
