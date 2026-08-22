@@ -116,6 +116,13 @@ def _start_worker_heartbeat(**kwargs) -> None:
 
     global _heartbeat_stop_event, _heartbeat_thread
 
+    # Tracing (OTel follow-up): configured once per worker child process, same
+    # lifecycle as the heartbeat thread below. No-op when OTEL_EXPORTER_OTLP_ENDPOINT
+    # is unset -- see app/core/tracing.py.
+    from app.core.tracing import setup_tracing
+
+    setup_tracing("relayhub-worker")
+
     hostname = socket.gethostname()
     pid = os.getpid()
     worker_id = get_worker_id()
