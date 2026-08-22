@@ -792,3 +792,40 @@ structurally; and both Prometheus metrics export and OpenTelemetry distributed
 tracing now exist and were verified end-to-end against real running infrastructure,
 not just unit tests. What's still open is listed above, not glossed
 over.
+
+## Post-phase fix: ad-blocker false-positive on `/v1/analytics/*`
+
+Reported after this phase's work was otherwise complete: the dashboard's own
+Analytics page intermittently failed to load, with the browser console showing
+`net::ERR_BLOCKED_BY_CLIENT` on the request to `/v1/analytics/events-by-type`.
+This is a client-side ad-blocker/privacy-extension filter-list match (EasyPrivacy
+and similar lists commonly block any URL containing the substring "analytics",
+first-party or not) — not a server error, not an auth issue, and unrelated to any
+change in this phase.
+
+**Constraint:** the `/v1/analytics/*` path is published, documented API surface —
+both the Node and Python SDKs (`sdks/node/src/resources/analytics.ts`,
+`sdks/python/relayhub/resources/analytics.py`) and the public API reference docs
+hard-code it. Renaming it outright would break every existing integration.
+
+**Fix:** mounted the same analytics router at a second path, `/v1/insights/*`
+(`backend/app/main.py`), rather than renaming anything — `/v1/analytics/*` is
+completely unchanged and stays the documented path for the SDKs. `/v1/insights/*`
+routes through the exact same handler functions (no duplicated logic, nothing that
+can drift between the two), is excluded from the generated OpenAPI schema
+(`include_in_schema=False` — it's an internal alias, not a second public surface to
+document), and is what the first-party web dashboard (`apps/web`) now calls
+instead, in both the Analytics page and the main Dashboard page.
+
+Regression tests (`tests/integration/test_analytics.py`):
+`test_insights_alias_mirrors_analytics_for_ad_blocker_avoidance` (both paths return
+identical data for the same request) and `test_insights_path_excluded_from_openapi_schema`
+(confirms `/v1/analytics` is documented and `/v1/insights` is not).
+
+Verified: full backend suite 267/267 (12/12 in `test_analytics.py`, including the 2
+new tests), mypy clean, ruff clean on every touched file. Frontend: `tsc --noEmit`
+and `next lint` both clean on the two edited pages. `next build` itself could not
+be run to completion in this sandbox (blocked on fetching Google Fonts over a
+network domain not in this sandbox's allowlist — an environment limitation, not a
+code issue); `tsc`/`eslint` passing cleanly is the reliable signal that the
+TypeScript and import changes themselves are sound.
