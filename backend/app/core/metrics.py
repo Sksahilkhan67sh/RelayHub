@@ -77,6 +77,30 @@ STUCK_JOBS_COUNT = Gauge(
     "fallback uses) -- a nonzero, non-transient value here is worth alerting on",
 )
 
+# --- Phase 3 AI intelligence layer (section 16) ---
+# Same DB-refreshed-gauge pattern as everything above, for the same reason: the
+# insight_tasks.py Celery task that generates these runs in a worker process, not
+# the API process that serves /metrics, so an in-process Counter incremented there
+# would only ever be visible to a scrape of that one worker. Re-deriving from the
+# database (durable, already-persisted anomaly/incident/RCA rows) sidesteps that.
+INSIGHTS_ANOMALIES_LAST_HOUR = Gauge("relayhub_insights_anomalies_last_hour", "Anomalies detected in the last hour")
+INSIGHTS_INCIDENTS_OPEN = Gauge(
+    "relayhub_insights_incidents_open", "Incidents currently in a non-terminal state", labelnames=["status"]
+)
+INSIGHTS_RCA_GENERATED_LAST_HOUR = Gauge(
+    "relayhub_insights_rca_generated_last_hour", "Root cause analyses generated in the last hour", labelnames=["source"]
+)
+# AI-specific call metrics (analysis count/failures/latency/token usage) are
+# in-process Counters/Histogram in app/modules/insights/ai/service.py instead of
+# DB-refreshed gauges, because a failed AI call is deliberately NOT persisted to
+# the database (nothing to show the user for a failed call) -- there is no durable
+# row to re-derive a failure count from. This means, same as any in-process metric
+# in a multi-worker-process deployment, per-process values rather than a
+# cluster-wide total unless scraped per-worker or pushed through a gateway -- an
+# accepted, documented tradeoff for this pass (see that module for the counters
+# themselves), not an oversight.
+
+
 _QUEUE_DEPTH_STATUSES = (
     DeliveryJobStatus.QUEUED.value,
     DeliveryJobStatus.PROCESSING.value,
@@ -116,3 +140,36 @@ async def refresh_reliability_gauges(db: AsyncSession) -> None:
     if delivery_metrics["dlq_rate"] is not None:
         DLQ_RATE.set(delivery_metrics["dlq_rate"])
     STUCK_JOBS_COUNT.set(delivery_metrics["stuck_jobs_count"])
+
+    await _refresh_insights_gauges(db)
+
+
+async def _refresh_insights_gauges(db: AsyncSession) -> None:
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import func, select
+
+    from app.modules.insights.models import Anomaly, Incident, IncidentStatus, RootCauseAnalysis
+
+    one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
+
+    anomaly_count = (
+        await db.execute(select(func.count()).select_from(Anomaly).where(Anomaly.observed_at >= one_hour_ago))
+    ).scalar_one()
+    INSIGHTS_ANOMALIES_LAST_HOUR.set(anomaly_count or 0)
+
+    for status_value in (IncidentStatus.OPEN.value, IncidentStatus.INVESTIGATING.value, IncidentStatus.RECOVERING.value):
+        count = (
+            await db.execute(select(func.count()).select_from(Incident).where(Incident.status == status_value))
+        ).scalar_one()
+        INSIGHTS_INCIDENTS_OPEN.labels(status=status_value).set(count or 0)
+
+    for source_value in ("deterministic", "ai"):
+        count = (
+            await db.execute(
+                select(func.count())
+                .select_from(RootCauseAnalysis)
+                .where(RootCauseAnalysis.source == source_value, RootCauseAnalysis.created_at >= one_hour_ago)
+            )
+        ).scalar_one()
+        INSIGHTS_RCA_GENERATED_LAST_HOUR.labels(source=source_value).set(count or 0)
