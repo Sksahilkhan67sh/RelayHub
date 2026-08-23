@@ -25,6 +25,7 @@ import {
   FileSearch,
   Newspaper,
   Briefcase,
+  Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { RelayHubMark } from "@/components/ui/logo";
@@ -39,6 +40,12 @@ export const NAV_ITEMS = [
   { href: "/retry-queue", label: "Retry Queue", icon: RotateCcw },
   { href: "/dlq", label: "Dead Letter Queue", icon: Inbox },
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
+  // Phase 3 AI Intelligence Layer -- deliberately its own nav item, not folded
+  // into Analytics: Analytics is raw metrics/reporting, Intelligence is derived
+  // health/anomaly/incident/RCA state built on top of it (see
+  // backend/app/modules/insights/routes.py's module docstring for the API-path
+  // reasoning between the two).
+  { href: "/intelligence", label: "Intelligence", icon: Sparkles },
   { href: "/logs", label: "Logs", icon: ScrollText },
   { href: "/alerts", label: "Alerts", icon: Bell },
   { href: "/usage", label: "Usage", icon: Gauge },
