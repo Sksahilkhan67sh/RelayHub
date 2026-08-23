@@ -420,3 +420,101 @@ export interface JobPostingOut {
   created_at: string;
   updated_at: string;
 }
+
+// --- Phase 3: AI Intelligence Layer (/v1/insights/intelligence/...) ---
+// NOTE: distinct from EndpointHealthOut above (that one is the Phase 1/2
+// circuit-breaker health used for auto-pause decisions -- see
+// backend/app/modules/endpoints/models.py's EndpointHealth enum). This is the
+// separate, analytical health/anomaly/incident/RCA layer added in Phase 3; the
+// two "health" concepts are related but not the same field or the same source.
+
+export interface EvidenceItem {
+  label: string;
+  value: string | number;
+}
+
+export interface EndpointHealthSnapshotOut {
+  id: string;
+  endpoint_id: string;
+  window_start: string;
+  window_end: string;
+  status: "healthy" | "degraded" | "unhealthy" | "critical" | "unknown";
+  health_score: number | null;
+  confidence: number;
+  sample_size: number;
+  success_rate: number | null;
+  failure_rate: number | null;
+  http_4xx_rate: number | null;
+  http_5xx_rate: number | null;
+  timeout_rate: number | null;
+  retry_rate: number | null;
+  dlq_rate: number | null;
+  latency_p50_ms: number | null;
+  latency_p95_ms: number | null;
+  supporting_signals: Record<string, unknown>;
+}
+
+export interface AnomalyOut {
+  id: string;
+  endpoint_id: string | null;
+  metric: string;
+  direction: "spike" | "drop" | "trend" | "regression";
+  observed_value: number;
+  baseline_value: number;
+  delta: number;
+  observed_at: string;
+  confidence: number;
+  sample_size: number;
+  evidence: EvidenceItem[];
+  incident_id: string | null;
+}
+
+export interface RootCauseAnalysisOut {
+  id: string;
+  source: "deterministic" | "ai";
+  likely_cause: string;
+  confidence_level: "confirmed" | "highly_likely" | "likely" | "possible" | "unknown";
+  confidence_score: number;
+  evidence: EvidenceItem[];
+  recommendations: string[];
+  ai_provider: string | null;
+  ai_model: string | null;
+  created_at: string;
+}
+
+export interface IncidentOut {
+  id: string;
+  endpoint_id: string | null;
+  status: "open" | "investigating" | "recovering" | "resolved";
+  failure_category: string;
+  severity: "info" | "warning" | "critical";
+  title: string;
+  summary: string;
+  opened_at: string;
+  recovering_since: string | null;
+  resolved_at: string | null;
+  last_signal_at: string;
+}
+
+export interface IncidentDetailOut extends IncidentOut {
+  anomalies: AnomalyOut[];
+  rca_entries: RootCauseAnalysisOut[];
+}
+
+export interface RecommendationsOut {
+  incident_id: string;
+  recommendations: string[];
+}
+
+export interface TimelineEventOut {
+  type: "incident_opened" | "anomaly" | "recovering" | "resolved";
+  at: string;
+  detail: string;
+}
+
+export interface IncidentTimelineOut {
+  incident_id: string;
+  status: string;
+  events: TimelineEventOut[];
+}
+
