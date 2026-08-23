@@ -47,7 +47,15 @@ class AIAnalysisOutcome:
     right observability counters in either case, without every caller re-deriving
     that logic."""
 
-    def __init__(self, *, result: AIAnalysisResult | None, provider: str | None, model: str | None, skipped_reason: str | None = None, error: str | None = None):
+    def __init__(
+        self,
+        *,
+        result: AIAnalysisResult | None,
+        provider: str | None,
+        model: str | None,
+        skipped_reason: str | None = None,
+        error: str | None = None,
+    ):
         self.result = result
         self.provider = provider
         self.model = model
