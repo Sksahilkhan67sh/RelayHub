@@ -137,7 +137,8 @@ async def analyze_endpoint(
 
     if incident is not None:
         deterministic = build_rca(metrics=current, min_sample_size=settings.INSIGHTS_MIN_SAMPLE_SIZE)
-        await _upsert_rca(db, incident=incident, organization_id=organization_id, source="deterministic", fields={k: v for k, v in deterministic.items() if k != "source"})
+        deterministic_fields = {k: v for k, v in deterministic.items() if k != "source"}
+        await _upsert_rca(db, incident=incident, organization_id=organization_id, source="deterministic", fields=deterministic_fields)
 
         if ai_provider is not None:
             outcome: AIAnalysisOutcome = await analyze_incident(
@@ -148,7 +149,8 @@ async def analyze_endpoint(
                 deterministic_evidence=deterministic["evidence"],
             )
             if outcome.succeeded:
-                await _upsert_rca(db, incident=incident, organization_id=organization_id, source="ai", fields={k: v for k, v in ai_result_to_rca_fields(outcome).items() if k != "source"})
+                ai_fields = {k: v for k, v in ai_result_to_rca_fields(outcome).items() if k != "source"}
+                await _upsert_rca(db, incident=incident, organization_id=organization_id, source="ai", fields=ai_fields)
 
     await _evaluate_recovery_for_endpoint(db, endpoint_id=endpoint_id, metrics=current, health_status=health["status"], observed_at=now)
 
@@ -156,7 +158,9 @@ async def analyze_endpoint(
     return "analyzed"
 
 
-async def _evaluate_recovery_for_endpoint(db: AsyncSession, *, endpoint_id: uuid.UUID, metrics: WindowMetrics, health_status: str, observed_at: datetime) -> None:
+async def _evaluate_recovery_for_endpoint(
+    db: AsyncSession, *, endpoint_id: uuid.UUID, metrics: WindowMetrics, health_status: str, observed_at: datetime
+) -> None:
     """Runs recovery evaluation for every non-terminal incident on this endpoint,
     independent of whether new anomalies fired this pass -- a quiet, healthy
     window is itself the signal recovery detection needs (section 5)."""
@@ -217,7 +221,7 @@ def analyze_endpoint_health(self, endpoint_id: str, organization_id: str) -> Non
             # silently drop this window's analysis. Deliberately NOT
             # infinite -- max_retries=3 -- an insights job that can never
             # succeed must not retry forever and pile up on the insights queue.
-            raise self.retry(exc=exc)
+            raise self.retry(exc=exc) from exc
 
 
 @celery_app.task(name="analyze_all_endpoints")
