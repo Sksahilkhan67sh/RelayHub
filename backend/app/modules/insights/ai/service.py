@@ -23,10 +23,10 @@ import time
 from prometheus_client import Counter, Histogram
 
 from app.core.config import settings
-from app.modules.insights.ai.provider import AIProvider, AICompletionRequest, AIProviderError
-from app.modules.insights.ai.prompt import build_incident_analysis_prompt
-from app.modules.insights.ai.schemas import AIAnalysisResult, AIAnalysisValidationError, parse_and_validate
 from app.modules.insights.aggregation import WindowMetrics
+from app.modules.insights.ai.prompt import build_incident_analysis_prompt
+from app.modules.insights.ai.provider import AICompletionRequest, AIProvider, AIProviderError
+from app.modules.insights.ai.schemas import AIAnalysisResult, AIAnalysisValidationError, parse_and_validate
 from app.modules.insights.models import Incident
 
 logger = logging.getLogger("relayhub.insights.ai")
