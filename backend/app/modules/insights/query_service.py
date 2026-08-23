@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import cast
 
 from fastapi import HTTPException, status
 from sqlalchemy import func, select
@@ -39,12 +40,12 @@ async def get_latest_health(db: AsyncSession, *, organization_id: uuid.UUID, end
     )
     if endpoint_id is not None:
         latest_window_end = latest_window_end.where(EndpointHealthSnapshot.endpoint_id == endpoint_id)
-    latest_window_end = latest_window_end.subquery()
+    latest_window_end_subq = latest_window_end.subquery()
 
     query = select(EndpointHealthSnapshot).join(
-        latest_window_end,
-        (EndpointHealthSnapshot.endpoint_id == latest_window_end.c.endpoint_id)
-        & (EndpointHealthSnapshot.window_end == latest_window_end.c.max_window_end),
+        latest_window_end_subq,
+        (EndpointHealthSnapshot.endpoint_id == latest_window_end_subq.c.endpoint_id)
+        & (EndpointHealthSnapshot.window_end == latest_window_end_subq.c.max_window_end),
     ).where(EndpointHealthSnapshot.organization_id == organization_id)
 
     return list((await db.execute(query)).scalars().all())
@@ -153,5 +154,5 @@ async def get_incident_timeline(db: AsyncSession, *, organization_id: uuid.UUID,
     if incident.resolved_at:
         events.append({"type": "resolved", "at": incident.resolved_at, "detail": "Incident resolved"})
 
-    events.sort(key=lambda e: e["at"])
+    events.sort(key=lambda e: cast(datetime, e["at"]))
     return {"incident_id": incident.id, "status": incident.status, "events": events}
