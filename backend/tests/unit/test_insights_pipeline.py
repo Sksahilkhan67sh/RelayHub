@@ -165,13 +165,19 @@ def test_classifies_5xx_dominant_as_destination_5xx():
 
 
 def test_classifies_429_dominant_as_rate_limited_not_generic_4xx():
-    metrics = _metrics(sample_size=100, success_count=10, failure_count=90, http_4xx_count=90, rate_limited_count=90, status_breakdown={"429": 90, "200": 10})
+    metrics = _metrics(
+        sample_size=100, success_count=10, failure_count=90, http_4xx_count=90, rate_limited_count=90,
+        status_breakdown={"429": 90, "200": 10},
+    )
     category, _ = classify_failure(metrics)
     assert category == FailureCategory.RATE_LIMITED.value
 
 
 def test_classifies_auth_failures_distinct_from_generic_4xx():
-    metrics = _metrics(sample_size=100, success_count=20, failure_count=80, http_4xx_count=80, auth_failure_count=80, status_breakdown={"401": 80, "200": 20})
+    metrics = _metrics(
+        sample_size=100, success_count=20, failure_count=80, http_4xx_count=80, auth_failure_count=80,
+        status_breakdown={"401": 80, "200": 20},
+    )
     category, _ = classify_failure(metrics)
     assert category == FailureCategory.AUTHENTICATION_FAILURE.value
 
@@ -221,7 +227,10 @@ def test_rca_never_confirmed_on_thin_sample_even_at_100_percent():
 
 def test_rca_reaches_confirmed_with_large_sample_and_dominant_cause():
     n = 2000
-    metrics = _metrics(sample_size=n, success_count=int(n * 0.02), failure_count=int(n * 0.98), http_5xx_count=int(n * 0.98), status_breakdown={"503": int(n * 0.98)})
+    metrics = _metrics(
+        sample_size=n, success_count=int(n * 0.02), failure_count=int(n * 0.98), http_5xx_count=int(n * 0.98),
+        status_breakdown={"503": int(n * 0.98)},
+    )
     rca = build_rca(metrics=metrics, min_sample_size=settings.INSIGHTS_MIN_SAMPLE_SIZE)
     assert rca["confidence_level"] == ConfidenceLevel.CONFIRMED.value
     assert "destination" in rca["likely_cause"].lower() or "outage" in rca["likely_cause"].lower()
@@ -231,6 +240,9 @@ def test_rca_reaches_confirmed_with_large_sample_and_dominant_cause():
 
 def test_rca_recommendation_matches_failure_category():
     n = 2000
-    metrics = _metrics(sample_size=n, success_count=int(n * 0.1), failure_count=int(n * 0.9), rate_limited_count=int(n * 0.9), http_4xx_count=int(n * 0.9), status_breakdown={"429": int(n * 0.9)})
+    metrics = _metrics(
+        sample_size=n, success_count=int(n * 0.1), failure_count=int(n * 0.9), rate_limited_count=int(n * 0.9),
+        http_4xx_count=int(n * 0.9), status_breakdown={"429": int(n * 0.9)},
+    )
     rca = build_rca(metrics=metrics, min_sample_size=settings.INSIGHTS_MIN_SAMPLE_SIZE)
     assert "rate limit" in rca["recommendations"][0].lower()
