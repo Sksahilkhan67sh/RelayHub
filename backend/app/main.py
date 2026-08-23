@@ -29,6 +29,7 @@ from app.modules.delivery.routes import router as deliveries_router
 from app.modules.dlq.routes import router as dlq_router
 from app.modules.endpoints.routes import router as endpoints_router
 from app.modules.events.routes import router as events_router
+from app.modules.insights.routes import router as insights_intelligence_router
 from app.modules.logs.routes import router as logs_router
 
 app = FastAPI(
@@ -93,6 +94,10 @@ app.include_router(logs_router, prefix=settings.API_V1_PREFIX)
 # match the substring "analytics" in first-party request URLs.
 app.include_router(analytics_router, prefix=f"{settings.API_V1_PREFIX}/analytics")
 app.include_router(analytics_router, prefix=f"{settings.API_V1_PREFIX}/insights", include_in_schema=False)
+# Phase 3 AI intelligence layer -- mounted at /v1/insights/intelligence/..., NOT
+# bare /v1/insights/..., to avoid colliding with the analytics alias mounted
+# immediately above (see insights/routes.py's module docstring for why).
+app.include_router(insights_intelligence_router, prefix=settings.API_V1_PREFIX)
 app.include_router(alerts_router, prefix=settings.API_V1_PREFIX)
 app.include_router(billing_router, prefix=settings.API_V1_PREFIX)
 app.include_router(admin_router, prefix=settings.API_V1_PREFIX)
