@@ -14,15 +14,31 @@ from app.modules.insights.failure_classification import classify_failure
 from app.modules.insights.models import ConfidenceLevel, FailureCategory
 
 _RECOMMENDATIONS: dict[str, str] = {
-    FailureCategory.DESTINATION_5XX.value: "Check the destination service's health and recent deployments -- the errors are coming from their side, not RelayHub.",
-    FailureCategory.RATE_LIMITED.value: "Check the destination's rate limits and consider reducing delivery concurrency to this endpoint.",
-    FailureCategory.AUTHENTICATION_FAILURE.value: "Verify the webhook authentication credentials (signing secret, API key, or auth headers) are still valid on the destination side.",
-    FailureCategory.DESTINATION_4XX.value: "Review the request payload and headers against the destination's expected schema -- this looks like a client-side integration issue, not a RelayHub delivery problem.",
-    FailureCategory.TIMEOUT.value: "Investigate destination latency before increasing timeout values -- a longer timeout treats the symptom, not the cause.",
+    FailureCategory.DESTINATION_5XX.value: (
+        "Check the destination service's health and recent deployments -- the errors are coming from their side, not RelayHub."
+    ),
+    FailureCategory.RATE_LIMITED.value: (
+        "Check the destination's rate limits and consider reducing delivery concurrency to this endpoint."
+    ),
+    FailureCategory.AUTHENTICATION_FAILURE.value: (
+        "Verify the webhook authentication credentials (signing secret, API key, or auth headers) "
+        "are still valid on the destination side."
+    ),
+    FailureCategory.DESTINATION_4XX.value: (
+        "Review the request payload and headers against the destination's expected schema -- this looks "
+        "like a client-side integration issue, not a RelayHub delivery problem."
+    ),
+    FailureCategory.TIMEOUT.value: (
+        "Investigate destination latency before increasing timeout values -- a longer timeout treats the symptom, not the cause."
+    ),
     FailureCategory.NETWORK_FAILURE.value: "Check DNS resolution and network reachability to the destination host.",
-    FailureCategory.WORKER_FAILURE.value: "RelayHub worker processes are reporting unhealthy -- check worker logs and Celery/Redis connectivity.",
+    FailureCategory.WORKER_FAILURE.value: (
+        "RelayHub worker processes are reporting unhealthy -- check worker logs and Celery/Redis connectivity."
+    ),
     FailureCategory.QUEUE_FAILURE.value: "Delivery queue depth or processing is abnormal -- check Redis/Celery broker health.",
-    FailureCategory.UNKNOWN.value: "No single dominant cause was identified from delivery evidence -- review the incident timeline and raw attempt logs manually.",
+    FailureCategory.UNKNOWN.value: (
+        "No single dominant cause was identified from delivery evidence -- review the incident timeline and raw attempt logs manually."
+    ),
 }
 
 # proportion-of-sample -> confidence level. Confidence LEVEL is a discrete label;
@@ -101,10 +117,16 @@ def build_rca(*, metrics: WindowMetrics, min_sample_size: int) -> dict:
 
 
 _LIKELY_CAUSE_TEXT: dict[str, str] = {
-    FailureCategory.DESTINATION_5XX.value: "Destination service is returning server errors (5xx) -- likely a destination-side outage or deployment issue.",
+    FailureCategory.DESTINATION_5XX.value: (
+        "Destination service is returning server errors (5xx) -- likely a destination-side outage or deployment issue."
+    ),
     FailureCategory.RATE_LIMITED.value: "Destination is rate-limiting RelayHub's delivery requests (HTTP 429).",
-    FailureCategory.AUTHENTICATION_FAILURE.value: "Destination is rejecting requests as unauthenticated/unauthorized (401/403) -- credentials likely rotated or misconfigured.",
-    FailureCategory.DESTINATION_4XX.value: "Destination is rejecting requests as malformed (4xx, excluding auth/rate-limit) -- likely a payload or schema mismatch.",
+    FailureCategory.AUTHENTICATION_FAILURE.value: (
+        "Destination is rejecting requests as unauthenticated/unauthorized (401/403) -- credentials likely rotated or misconfigured."
+    ),
+    FailureCategory.DESTINATION_4XX.value: (
+        "Destination is rejecting requests as malformed (4xx, excluding auth/rate-limit) -- likely a payload or schema mismatch."
+    ),
     FailureCategory.TIMEOUT.value: "Requests to the destination are timing out -- destination latency exceeds the configured timeout.",
     FailureCategory.NETWORK_FAILURE.value: "Requests are failing at the network/connection level before a response is received.",
     FailureCategory.WORKER_FAILURE.value: "RelayHub's own worker processes are unhealthy, reducing delivery capacity for this endpoint.",
