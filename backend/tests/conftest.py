@@ -26,6 +26,7 @@ from app.modules.alerts import models as _alerts_models  # noqa: F401
 from app.modules.billing import models as _billing_models  # noqa: F401
 from app.modules.admin import models as _admin_models  # noqa: F401
 from app.modules.content import models as _content_models  # noqa: F401
+from app.modules.insights import models as _insights_models  # noqa: F401
 
 
 @pytest_asyncio.fixture
