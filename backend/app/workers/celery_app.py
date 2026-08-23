@@ -9,7 +9,7 @@ celery_app = Celery(
     "relayhub",
     broker=settings.CELERY_BROKER_URL,
     backend=settings.CELERY_RESULT_BACKEND,
-    include=["app.workers.tasks"],
+    include=["app.workers.tasks", "app.workers.insight_tasks"],
 )
 
 # Phase E fix: the worker process only ever imported the handful of ORM models that
@@ -32,6 +32,7 @@ from app.modules.billing import models as _billing_models  # noqa: F401,E402
 from app.modules.delivery import models as _delivery_models  # noqa: F401,E402
 from app.modules.endpoints import models as _endpoints_models  # noqa: F401,E402
 from app.modules.events import models as _events_models  # noqa: F401,E402
+from app.modules.insights import models as _insights_models  # noqa: F401,E402
 
 celery_app.conf.update(
     task_serializer="json",
@@ -42,6 +43,18 @@ celery_app.conf.update(
     task_acks_late=True,  # don't ack until the task finishes -- a crashed worker's job goes back to the queue
     worker_prefetch_multiplier=4,
     task_reject_on_worker_lost=True,
+    # Phase 3, section 13: AI/insights analysis must not starve delivery workers.
+    # Routed to a dedicated "insights" queue -- default queue ("celery") stays
+    # reserved for deliver_webhook/check_due_retries/reconcile_stuck_jobs. This
+    # only takes effect if the deployment actually runs a worker consuming the
+    # "insights" queue (e.g. `celery -A app.workers.celery_app worker -Q insights`);
+    # without one, insights tasks simply queue up in Redis without being
+    # processed, which is a safe failure mode (delivery is unaffected) but not a
+    # useful one -- see the final report's deployment note.
+    task_routes={
+        "analyze_endpoint_health": {"queue": "insights"},
+        "analyze_all_endpoints": {"queue": "insights"},
+    },
     beat_schedule={
         "scan-due-retries": {
             "task": "check_due_retries",
@@ -57,6 +70,14 @@ celery_app.conf.update(
             # within the STUCK_PROCESSING_AFTER heuristic window, cheap enough
             # (a couple of indexed WHERE status = ... UPDATEs) to run every tick.
             "schedule": 60.0,
+        },
+        "analyze-all-endpoints": {
+            "task": "analyze_all_endpoints",
+            # Matches INSIGHTS_HEALTH_WINDOW_MINUTES so each scheduled run produces
+            # exactly one new, non-overlapping window per endpoint -- see
+            # insight_tasks.py's idempotency check for what happens if a run
+            # somehow fires twice for the same window.
+            "schedule": settings.INSIGHTS_HEALTH_WINDOW_MINUTES * 60.0,
         },
     },
 )
