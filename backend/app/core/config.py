@@ -68,6 +68,24 @@ class Settings(BaseSettings):
     OTEL_EXPORTER_OTLP_ENDPOINT: str = ""
     LOG_LEVEL: str = "INFO"
 
+    # Insights / AI Intelligence Layer (Phase 3). All deterministic thresholds --
+    # nothing here talks to an AI provider, see AI_PROVIDER settings below for that.
+    INSIGHTS_MIN_SAMPLE_SIZE: int = 20  # below this, health/anomaly checks report UNKNOWN rather than guess
+    INSIGHTS_HEALTH_WINDOW_MINUTES: int = 60
+    INSIGHTS_BASELINE_LOOKBACK_WINDOWS: int = 6  # compare current window vs the preceding N windows
+    INSIGHTS_ANOMALY_MIN_RATE_DELTA: float = 0.15  # 15 percentage points minimum movement to flag a rate anomaly
+    INSIGHTS_ANOMALY_MIN_LATENCY_DELTA_RATIO: float = 0.5  # p95 latency must move by >=50% vs baseline
+    INSIGHTS_INCIDENT_STABILITY_WINDOWS: int = 2  # consecutive healthy windows required before RESOLVED
+
+    # AI provider abstraction (Phase 3, section 8). Disabled by default -- the
+    # deterministic pipeline (health/anomaly/incident/RCA) works fully without it.
+    AI_PROVIDER_ENABLED: bool = False
+    AI_PROVIDER: str = "anthropic"  # anthropic | openai | none
+    AI_PROVIDER_API_KEY: str = ""
+    AI_PROVIDER_MODEL: str = "claude-sonnet-4-6"
+    AI_PROVIDER_TIMEOUT_SECONDS: int = 20
+    AI_PROVIDER_MAX_TOKENS: int = 1000
+
 
 @lru_cache
 def get_settings() -> Settings:
