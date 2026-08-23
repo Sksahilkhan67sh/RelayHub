@@ -68,6 +68,11 @@ export function statusToSignalColor(status: string): SignalColor {
     case "trialing":
     case "pending":
     case "suppressed":
+    // Phase 3 AI intelligence layer statuses (see lib/types.ts's IncidentOut /
+    // EndpointHealthSnapshotOut) -- "investigating"/"recovering" are active-but-
+    // not-yet-resolved, same amber treatment as "processing"/"pending" elsewhere.
+    case "investigating":
+    case "recovering":
       return "amber";
     case "failed":
     case "dead_letter":
@@ -75,6 +80,7 @@ export function statusToSignalColor(status: string): SignalColor {
     case "past_due":
     case "canceled":
     case "open":
+    case "critical":
       return "red";
     default:
       return "gray";
