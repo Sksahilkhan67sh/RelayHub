@@ -17,6 +17,31 @@ import (
 
 var retryableStatus = map[int]bool{429: true, 500: true, 502: true, 503: true, 504: true}
 
+// isJWT reports whether credential looks like a RelayHub JWT access token
+// (dashboard user session from POST /v1/auth/login or /v1/auth/refresh) rather
+// than a RelayHub API key. See the matching comment in the Node SDK's
+// transport.ts for the full rationale. Real API keys are issued as
+// rh_<env>_<base64url secret> (app/core/security.go's Python equivalent,
+// generate_api_key) and never contain a dot, so this check cannot misroute a
+// real key.
+func isJWT(credential string) bool {
+	parts := strings.Split(credential, ".")
+	if len(parts) != 3 {
+		return false
+	}
+	for _, p := range parts {
+		if p == "" {
+			return false
+		}
+		for _, c := range p {
+			if !(c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-' || c == '_') {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // requestOptions carries per-call overrides. Zero value means "use client defaults."
 type requestOptions struct {
 	query          url.Values
@@ -115,11 +140,18 @@ func (t *transport) do(ctx context.Context, method, path string, body any, opts 
 			cancel()
 			return nil, fmt.Errorf("relayhub: failed to build request: %w", err)
 		}
-		// See the matching comment in the Node SDK's transport.ts -- the backend's
-		// API-key auth dependency (app/modules/api_keys/dependencies.py) reads ONLY
-		// this header. Authorization: Bearer is reserved for dashboard user JWT
-		// sessions, a separate auth path this client never uses.
-		req.Header.Set("X-RelayHub-Api-Key", t.apiKey)
+		// SDK fix (Phase 4, SDK verification): API keys go on X-RelayHub-Api-Key
+		// (app/modules/api_keys/dependencies.py), JWT sessions -- from the CLI's
+		// login/whoami/dashboard-equivalent commands -- go on Authorization:
+		// Bearer (app/modules/auth/dependencies.py). These are two separate,
+		// mutually exclusive backend auth paths; sending the wrong one 403'd
+		// every JWT-session request with "Not authenticated" even for a valid,
+		// freshly-issued access token.
+		if isJWT(t.apiKey) {
+			req.Header.Set("Authorization", "Bearer "+t.apiKey)
+		} else {
+			req.Header.Set("X-RelayHub-Api-Key", t.apiKey)
+		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("User-Agent", "relayhub-go/1.0.1")
 		for k, v := range t.defaultHeaders {
