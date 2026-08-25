@@ -25,6 +25,39 @@ test("sends X-RelayHub-Api-Key, matching the backend's actual API-key auth depen
   assert.equal(capturedHeaders?.get("authorization"), null);
 });
 
+test("sends X-RelayHub-Api-Key for a real RelayHub API key (rh_test_..., no dots)", async () => {
+  let capturedHeaders: Headers | undefined;
+  const fakeFetch: typeof fetch = async (_url, init) => {
+    capturedHeaders = new Headers(init?.headers);
+    return jsonResponse(200, { id: "ep_123", name: "Test" });
+  };
+  const realShapedKey = "rh_test_" + "a".repeat(43); // matches generate_api_key's actual output shape
+  const client = new RelayHubClient({ apiKey: realShapedKey, fetch: fakeFetch, maxRetries: 0 });
+  await client.endpoints.get("ep_123");
+
+  assert.equal(capturedHeaders?.get("x-relayhub-api-key"), realShapedKey);
+  assert.equal(capturedHeaders?.get("authorization"), null);
+});
+
+test("sends Authorization: Bearer for a JWT session token (CLI login/whoami/dashboard commands)", async () => {
+  let capturedHeaders: Headers | undefined;
+  const fakeFetch: typeof fetch = async (_url, init) => {
+    capturedHeaders = new Headers(init?.headers);
+    return jsonResponse(200, { id: "ep_123", name: "Test" });
+  };
+  // Shape of a real access token from POST /v1/auth/login: header.payload.signature,
+  // each segment base64url. Not a real signed token, just JWT-shaped for this test.
+  const jwtShaped = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyXzEyMyJ9.c2lnbmF0dXJlLWJ5dGVz";
+  const client = new RelayHubClient({ apiKey: jwtShaped, fetch: fakeFetch, maxRetries: 0 });
+  await client.endpoints.get("ep_123");
+
+  assert.equal(capturedHeaders?.get("authorization"), `Bearer ${jwtShaped}`);
+  // Regression guard: this bug meant `relay login`/`relay whoami` and every other
+  // JWT-session CLI command 403'd against the real backend with "Not authenticated",
+  // even with a perfectly valid, freshly-issued access token.
+  assert.equal(capturedHeaders?.get("x-relayhub-api-key"), null);
+});
+
 test("successful GET returns parsed JSON", async () => {
   const fakeFetch: typeof fetch = async () => jsonResponse(200, { id: "ep_123", name: "Test" });
   const client = new RelayHubClient({ apiKey: "test_key", fetch: fakeFetch, maxRetries: 0 });
