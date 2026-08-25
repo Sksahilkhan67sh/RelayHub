@@ -52,6 +52,51 @@ jobs:
         working-directory: backend
         run: mypy app --ignore-missing-imports
 
+  # G-2 fix (Phase 4A): the `backend` job above only ever exercised SQLite, even
+  # though it already starts real postgres/redis service containers -- this job runs
+  # the exact same suite a second time against those same containers via
+  # TEST_DATABASE_URL (see tests/conftest.py), so Postgres-specific behavior (JSON
+  # column semantics, real FK/unique-constraint enforcement, concurrent
+  # claim/lease locking) is actually verified, not assumed from SQLite passing.
+  backend-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: relayhub
+          POSTGRES_PASSWORD: relayhub
+          POSTGRES_DB: relayhub_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U relayhub" --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install backend deps
+        working-directory: backend
+        run: pip install -r requirements.txt pytest asyncpg
+      - name: Run alembic migrations against real Postgres
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql+asyncpg://relayhub:relayhub@localhost:5432/relayhub_test
+        run: alembic upgrade head
+      - name: Tests (real PostgreSQL, not SQLite)
+        working-directory: backend
+        env:
+          TEST_DATABASE_URL: postgresql+asyncpg://relayhub:relayhub@localhost:5432/relayhub_test
+          REDIS_URL: redis://localhost:6379/0
+          CELERY_BROKER_URL: redis://localhost:6379/1
+          CELERY_RESULT_BACKEND: redis://localhost:6379/2
+        run: pytest -q
+
   frontend:
     runs-on: ubuntu-latest
     steps:
