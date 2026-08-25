@@ -14,6 +14,14 @@ from sqlalchemy.pool import StaticPool
 from app.db.base import Base
 from app.db.session import get_db
 
+# G-2 fix (Phase 4A): the suite defaults to fast in-memory SQLite as before, but can
+# be pointed at a real PostgreSQL instance via TEST_DATABASE_URL -- this is how the
+# same 320+ tests are re-run against Postgres in CI's new `backend-postgres` job (see
+# .github/workflows/ci.yml) and in this session's manual verification, instead of only
+# ever exercising SQLite's behavior. Not set -> byte-identical behavior to before this
+# change.
+TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "sqlite+aiosqlite:///:memory:")
+
 # Import all ORM models here so Base.metadata is fully populated before create_all().
 # As new modules (api_keys, endpoints, events, ...) add models, import them here too.
 from app.modules.auth import models as _auth_models  # noqa: F401
@@ -27,22 +35,34 @@ from app.modules.billing import models as _billing_models  # noqa: F401
 from app.modules.admin import models as _admin_models  # noqa: F401
 from app.modules.content import models as _content_models  # noqa: F401
 from app.modules.insights import models as _insights_models  # noqa: F401
+from app.modules.newsletter import models as _newsletter_models  # noqa: F401
 
 
 @pytest_asyncio.fixture
 async def db_session():
+    is_sqlite = TEST_DATABASE_URL.startswith("sqlite")
+    # StaticPool is what makes SQLite's `:memory:` database (one connection, otherwise
+    # every new connection sees a *different* empty in-memory DB) usable here at all;
+    # it's meaningless -- and a real bug, since it caps the whole test to one
+    # connection -- for a real database, so only apply it for SQLite.
     engine = create_async_engine(
-        "sqlite+aiosqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
+        TEST_DATABASE_URL,
+        **({"connect_args": {"check_same_thread": False}, "poolclass": StaticPool} if is_sqlite else {}),
     )
     async with engine.begin() as conn:
+        if not is_sqlite:
+            # Postgres persists between test runs (unlike sqlite's :memory:), so drop
+            # first for a clean slate in case a previous run left tables behind.
+            await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
 
     session_maker = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
     async with session_maker() as session:
         yield session
 
+    if not is_sqlite:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
     await engine.dispose()
 
 
