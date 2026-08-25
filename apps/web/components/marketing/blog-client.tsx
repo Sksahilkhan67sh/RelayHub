@@ -15,6 +15,7 @@ export function BlogClient() {
   const [category, setCategory] = useState<string>("All");
   const [email, setEmail] = useState("");
   const [newsletterNote, setNewsletterNote] = useState<string | null>(null);
+  const [newsletterSubmitting, setNewsletterSubmitting] = useState(false);
 
   useEffect(() => {
     api
@@ -37,10 +38,21 @@ export function BlogClient() {
     );
   }, [posts, query, category]);
 
-  function handleNewsletterSubmit(e: FormEvent) {
+  async function handleNewsletterSubmit(e: FormEvent) {
     e.preventDefault();
-    setNewsletterNote("Newsletter signup isn't wired up yet -- follow the Changelog for updates in the meantime.");
-    setEmail("");
+    setNewsletterSubmitting(true);
+    setNewsletterNote(null);
+    try {
+      const res = await api.post<{ status: string; message: string }>("/v1/newsletter/subscribe", { email });
+      setNewsletterNote(res.message);
+      setEmail("");
+    } catch (err) {
+      setNewsletterNote(
+        err instanceof ApiError ? err.message : "Something went wrong -- please try again."
+      );
+    } finally {
+      setNewsletterSubmitting(false);
+    }
   }
 
   return (
@@ -132,8 +144,8 @@ export function BlogClient() {
             aria-label="Email address"
             className="h-9 flex-1 rounded border border-graphite-200 bg-white px-3 text-xs dark:border-graphite-700 dark:bg-graphite-900"
           />
-          <Button type="submit" size="sm">
-            Subscribe
+          <Button type="submit" size="sm" disabled={newsletterSubmitting}>
+            {newsletterSubmitting ? "Subscribing..." : "Subscribe"}
           </Button>
         </form>
         {newsletterNote && <p className="text-xs text-graphite-500">{newsletterNote}</p>}
