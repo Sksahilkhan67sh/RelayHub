@@ -193,7 +193,9 @@ async def _handle_checkout_completed(db: AsyncSession, data_object: dict) -> Non
 
 async def _find_subscription_by_stripe_id(db: AsyncSession, stripe_subscription_id: str) -> Subscription | None:
     return (
-        await db.execute(select(Subscription).where(Subscription.stripe_subscription_id == stripe_subscription_id))
+        # tenant-scope: safe - driven by a signature-verified Stripe webhook payload; Stripe's own
+    # unique id is the only key available at this point, before we know which org it maps to.
+    await db.execute(select(Subscription).where(Subscription.stripe_subscription_id == stripe_subscription_id))
     ).scalar_one_or_none()
 
 
@@ -245,7 +247,9 @@ async def _handle_invoice(db: AsyncSession, data_object: dict, *, status_overrid
         return
 
     existing = (
-        await db.execute(select(Invoice).where(Invoice.stripe_invoice_id == stripe_invoice_id))
+        # tenant-scope: safe - driven by a signature-verified Stripe webhook payload; Stripe's own
+    # unique id is the only key available at this point, before we know which org it maps to.
+    await db.execute(select(Invoice).where(Invoice.stripe_invoice_id == stripe_invoice_id))
     ).scalar_one_or_none()
 
     stripe_subscription_id = data_object.get("subscription")
