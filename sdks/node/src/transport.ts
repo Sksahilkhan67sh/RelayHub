@@ -42,6 +42,30 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
+ * True for RelayHub JWT access tokens (dashboard user sessions from POST
+ * /v1/auth/login or /v1/auth/refresh), false for RelayHub API keys.
+ *
+ * SDK/CLI fix (Phase 4, SDK verification): this transport used to send every
+ * credential via X-RelayHub-Api-Key unconditionally. That's correct for real API
+ * keys (the SDK's primary, intended use case: server-to-server event publishing),
+ * but the CLI's `login`/`whoami`/`org`/`billing`/`endpoints`/`alerts`/`admin`
+ * commands authenticate with a JWT access token from /v1/auth/login, and every
+ * one of those backend routes requires `Authorization: Bearer <jwt>`
+ * (app/modules/auth/dependencies.py's get_current_auth/require_role) -- they
+ * don't accept X-RelayHub-Api-Key at all. Sent the old way, every such call
+ * 403'd with "Not authenticated", which is exactly the bug this fixes: real API
+ * keys are opaque high-entropy secrets (this backend issues them as
+ * `rh_<env>_<base64url secret, no dots>`, see app/core/security.py's
+ * generate_api_key), which
+ * cannot collide with this shape, so this check is unambiguous, not a heuristic
+ * that could misroute a real key.
+ */
+function isJwt(credential: string): boolean {
+  const parts = credential.split(".");
+  return parts.length === 3 && parts.every((p) => p.length > 0 && /^[A-Za-z0-9_-]+$/.test(p));
+}
+
+/**
  * Low-level HTTP transport shared by every resource client. Handles auth headers,
  * timeouts (via AbortController), exponential-backoff retries on 429/5xx and
  * network errors, and mapping non-2xx responses to typed RelayHubError subclasses.
@@ -59,6 +83,15 @@ export class Transport {
     const requestBody: unknown =
       options.idempotencyKey && body && typeof body === "object" ? { ...(body as object), idempotency_key: options.idempotencyKey } : body;
 
+    // See isJwt() above: API keys go on X-RelayHub-Api-Key (app/modules/api_keys/
+    // dependencies.py), JWT sessions go on Authorization: Bearer
+    // (app/modules/auth/dependencies.py) -- these are two separate, mutually
+    // exclusive backend auth paths, and a request must use exactly the one its
+    // credential actually is.
+    const authHeader: Record<string, string> = isJwt(this.config.apiKey)
+      ? { Authorization: `Bearer ${this.config.apiKey}` }
+      : { "X-RelayHub-Api-Key": this.config.apiKey };
+
     let attempt = 0;
     for (;;) {
       const controller = new AbortController();
@@ -68,13 +101,7 @@ export class Transport {
           method,
           signal: controller.signal,
           headers: {
-            // The backend's API-key auth dependency (app/modules/api_keys/dependencies.py)
-            // reads ONLY this header -- Authorization: Bearer is reserved for dashboard user
-            // JWT sessions (app/modules/auth/dependencies.py), a completely separate auth
-            // path. Sending Authorization here (as this transport did until this fix) means
-            // every request 401s against the real backend with "Missing X-RelayHub-Api-Key
-            // header", regardless of how valid the key is.
-            "X-RelayHub-Api-Key": this.config.apiKey,
+            ...authHeader,
             "Content-Type": "application/json",
             "User-Agent": "relayhub-node/1.0.0",
             ...this.config.defaultHeaders,
