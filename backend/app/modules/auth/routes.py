@@ -9,6 +9,7 @@ from app.modules.auth.dependencies import (
     AuthContext,
     enforce_forgot_password_rate_limit,
     enforce_login_rate_limit,
+    enforce_refresh_rate_limit,
     get_current_auth,
 )
 from app.modules.auth.models import Membership, Organization, User
@@ -55,7 +56,11 @@ async def login(
 
 
 @router.post("/refresh", response_model=TokenResponse)
-async def refresh(payload: RefreshRequest, db: AsyncSession = Depends(get_db)):
+async def refresh(
+    payload: RefreshRequest,
+    db: AsyncSession = Depends(get_db),
+    _rate_limit_check: None = Depends(enforce_refresh_rate_limit),
+):
     return await service.refresh_access_token(db, payload.refresh_token)
 
 
