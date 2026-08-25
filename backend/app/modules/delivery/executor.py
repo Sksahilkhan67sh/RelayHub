@@ -60,6 +60,8 @@ async def _claim_job(db: AsyncSession, job_id: uuid.UUID, *, worker_id: str) -> 
     if result.rowcount == 0:
         raise JobAlreadyClaimedError(f"Delivery job {job_id} was already claimed by another worker or is not runnable")
 
+    # tenant-scope: safe - internal Celery worker; job_id came from the queue message only, never
+    # from a user request. The job was already created under its owning org at publish time.
     job = (await db.execute(select(DeliveryJob).where(DeliveryJob.id == job_id))).scalar_one()
     return job
 
@@ -83,7 +85,11 @@ async def execute_delivery_job(
 ) -> DeliveryJob:
     job = await _claim_job(db, job_id, worker_id=worker_id)
 
+    # tenant-scope: safe - internal worker; event_id comes from the already-tenant-scoped `job`
+    # row loaded above, not user input.
     event = (await db.execute(select(Event).where(Event.id == job.event_id))).scalar_one()
+    # tenant-scope: safe - internal worker; endpoint_id comes from the already-tenant-scoped `job`
+    # row loaded above, not user input.
     endpoint = (await db.execute(select(Endpoint).where(Endpoint.id == job.endpoint_id))).scalar_one()
     primary_secret = (
         await db.execute(
