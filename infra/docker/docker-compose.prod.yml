@@ -91,6 +91,28 @@ services:
     command: celery -A app.workers.celery_app worker --loglevel=info
     restart: unless-stopped
 
+  # G-1 fix (Phase 4A): see docker-compose.yml (dev) for the full explanation --
+  # without a worker consuming the "insights" queue, Beat-scheduled
+  # analyze_all_endpoints tasks (and endpoint-triggered analyze_endpoint_health)
+  # queue up in Redis and are never processed, so the entire Phase 3 AI/insights
+  # pipeline is inert. This mirrors `worker` exactly except for the queue.
+  worker-insights:
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile
+    env_file:
+      - ../../backend/.env
+    environment:
+      ENV: production
+      DEBUG: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: celery -A app.workers.celery_app worker -Q insights --loglevel=info
+    restart: unless-stopped
+
   beat:
     build:
       context: ../../backend
