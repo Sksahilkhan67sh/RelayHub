@@ -7,8 +7,7 @@ import type { BlogPostOut } from "@/lib/types";
 
 // Fetched per-request rather than statically generated at build time: posts are
 // now created/edited/published by admins through the API at any time, so the set
-// of valid slugs isn't knowable at build time the way the old static blog-data.ts
-// array was.
+// of valid slugs isn't knowable at build time.
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 async function getPostBySlug(slug: string): Promise<BlogPostOut | null> {
