@@ -27,6 +27,14 @@ LOGIN_IP_RATE_WINDOW_SECONDS = 300  # 5 minutes
 FORGOT_PASSWORD_IP_RATE_LIMIT = 5
 FORGOT_PASSWORD_IP_RATE_WINDOW_SECONDS = 3600  # 1 hour
 
+# G-5 fix (Phase 4A): /auth/refresh had no rate limiting at all, unlike /login and
+# /forgot-password above. A refresh token is a higher-entropy credential than a
+# password guess, so this is a looser limit than login's -- it exists to bound
+# damage from a *leaked* refresh token being hammered (or a client stuck in a
+# reconnect loop), not to defend against brute-forcing the token itself.
+REFRESH_IP_RATE_LIMIT = 30
+REFRESH_IP_RATE_WINDOW_SECONDS = 300  # 5 minutes
+
 
 async def _enforce_rate_limit(
     request: Request,
@@ -66,6 +74,18 @@ async def enforce_login_rate_limit(
         request, response, rate_limiter,
         key_prefix="login", header_label="Login", limit=LOGIN_IP_RATE_LIMIT, window_seconds=LOGIN_IP_RATE_WINDOW_SECONDS,
         error_detail="Too many login attempts from this network, please try again later",
+    )
+
+
+async def enforce_refresh_rate_limit(
+    request: Request,
+    response: Response,
+    rate_limiter: RateLimiter = Depends(get_rate_limiter),
+) -> None:
+    await _enforce_rate_limit(
+        request, response, rate_limiter,
+        key_prefix="refresh", header_label="Refresh", limit=REFRESH_IP_RATE_LIMIT, window_seconds=REFRESH_IP_RATE_WINDOW_SECONDS,
+        error_detail="Too many refresh attempts from this network, please try again later",
     )
 
 
