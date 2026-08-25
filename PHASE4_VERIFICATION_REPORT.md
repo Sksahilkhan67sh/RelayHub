@@ -4,7 +4,7 @@
 
 Every G-1 through G-6 finding from the forensic audit is fixed and verified with real, executed evidence (not asserted) — real Postgres, real Redis, real Celery workers, real HTTP calls against a running API, real DB rows. G-7 (migration-vs-schema drift) is now verified clean. G-8 (prompt injection) was found already well-built on inspection; no changes were needed. G-9 (SDKs): Node, Python, and Go are fully built, tested, and fixed for a **real bug found during this verification** (see below); Java is fixed at the source level but could not be compiled or tested — Maven Central is not reachable from this environment.
 
-**Overall status: PASS, with one explicitly scoped exception (Java SDK compilation/test execution — environment-blocked, not a code failure).**
+**Overall status: PASS, with two explicitly scoped exceptions: (1) Java SDK compilation/test execution — environment-blocked, not a code failure; (2) the `backend-postgres` CI job's alembic step initially had a real, missed environment-variable bug, caught by an actual CI run rather than by this sandbox's own verification — see §12 for the full account and the fix.**
 
 No functionality from Phase 1, 2, or 3 was removed or altered in behavior; every change was additive or a narrow, justified fix. 332 backend tests pass (up from the audit's original 320) on both SQLite and real PostgreSQL 16.
 
@@ -165,7 +165,25 @@ Not a full new pen-test pass — a regression check against what changed. Re-con
 
 ---
 
-## 12. Remaining known limitations (explicitly not hidden)
+## 12. Post-report fix: real CI run caught a bug this sandbox's testing missed
+
+After this report was first written, the `backend-postgres` CI job was actually run on real GitHub Actions (not this sandbox) and failed:
+
+```
+pydantic_core._pydantic_core.ValidationError: 2 validation errors for Settings
+SECRET_KEY / ENCRYPTION_MASTER_KEY: Field required
+```
+
+**Root cause**: `tests/conftest.py` sets `SECRET_KEY` and `ENCRYPTION_MASTER_KEY` via `os.environ.setdefault(...)`, which only takes effect when Python imports `conftest.py` -- i.e. during the `pytest -q` step. The `alembic upgrade head` step added for G-7 runs the `alembic` CLI directly, which never imports `conftest.py`, so those two required (no-default) `Settings` fields were genuinely missing in real CI.
+
+**Why this sandbox's verification didn't catch it**: this sandbox had a local `backend/.env` file (created for this sandbox's own live E2E testing, and correctly excluded from the final ZIP) that pydantic-settings loads directly from disk, independent of which shell environment variables are set. That `.env` happened to supply both fields, silently masking the exact gap real CI hit. This is a real gap in the original verification, not just in the CI file -- it's now corrected on both sides:
+
+1. **CI fix**: added explicit `SECRET_KEY`/`ENCRYPTION_MASTER_KEY` (dummy CI-only values, matching `conftest.py`'s own values) to the alembic step's `env:` block in `.github/workflows/ci.yml`.
+2. **Verification fix**: re-ran both the alembic step and the full `pytest -q` suite via `env -i` (a genuinely empty environment, no `.env` file reachable) plus only the exact variables the CI step sets -- reproducing the real failure first, then confirming the fix resolves it. Also dropped the Postgres schema entirely (`DROP SCHEMA public CASCADE`) and re-ran all 17 migrations from a truly fresh database, not an already-migrated one, to rule out "already at head" false confidence. **332/332 tests still pass under these stricter, no-`.env` conditions.**
+
+This is called out here rather than silently folded into the numbers above so it's clear this was a real miss, caught by the person running the actual CI, not by this sandbox's own process.
+
+## 13. Remaining known limitations (explicitly not hidden)
 
 - **Java SDK**: fixed at source, not compiled or tested — Maven Central unreachable from this sandbox (confirmed via a real `403` from `mvn compile`). Needs a real build environment to actually verify before treating it as equivalent to the other three SDKs.
 - **CLI**: has no test script at all (`cli/package.json` defines no `test` command) — this predates Phase 4 and was not introduced by it, but it means the CLI's correctness rests on typecheck + the manual live smoke test in this report, not an automated suite.
@@ -177,13 +195,13 @@ Not a full new pen-test pass — a regression check against what changed. Re-con
 
 ---
 
-## 13. Changed-file inventory
+## 14. Changed-file inventory
 
 See the final response message for the complete NEW/MODIFIED/DELETED file list with per-file reasons — reproduced there rather than duplicated here to keep this report from going stale if it's read on its own.
 
 ---
 
-## 14. Final production-readiness assessment
+## 15. Final production-readiness assessment
 
 | Area | Before Phase 4 | After Phase 4 |
 |---|---|---|
