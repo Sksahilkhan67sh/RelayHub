@@ -20,6 +20,18 @@ from .errors import RelayHubConnectionError, RelayHubError, error_for_status
 _RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 
 
+def _is_jwt(credential: str) -> bool:
+    """True for RelayHub JWT access tokens, false for RelayHub API keys.
+
+    See the matching comment in the Node SDK's transport.ts for the full
+    rationale. Real API keys are issued as ``rh_<env>_<base64url secret>``
+    (app/core/security.py's generate_api_key) and never contain a dot, so this
+    check cannot misroute a real key.
+    """
+    parts = credential.split(".")
+    return len(parts) == 3 and all(part and all(c.isalnum() or c in "-_" for c in part) for part in parts)
+
+
 @dataclass
 class RequestOptions:
     query: dict[str, Any] | None = None
@@ -54,12 +66,20 @@ class Transport:
         if options.idempotency_key and request_body is not None:
             request_body["idempotency_key"] = options.idempotency_key
 
+        # SDK fix (Phase 4, SDK verification): API keys go on X-RelayHub-Api-Key
+        # (app/modules/api_keys/dependencies.py), JWT sessions -- from the CLI's
+        # `login`/`whoami`/dashboard-equivalent commands -- go on Authorization:
+        # Bearer (app/modules/auth/dependencies.py). These are two separate,
+        # mutually exclusive backend auth paths; sending the wrong one 403'd
+        # every JWT-session request with "Not authenticated" even for a valid,
+        # freshly-issued access token.
+        auth_header = (
+            {"Authorization": f"Bearer {self._config.api_key}"}
+            if _is_jwt(self._config.api_key)
+            else {"X-RelayHub-Api-Key": self._config.api_key}
+        )
         headers = {
-            # See the matching comment in the Node SDK's transport.ts -- the backend's
-            # API-key auth dependency (app/modules/api_keys/dependencies.py) reads ONLY
-            # this header. Authorization: Bearer is reserved for dashboard user JWT
-            # sessions, a separate auth path this client never uses.
-            "X-RelayHub-Api-Key": self._config.api_key,
+            **auth_header,
             "Content-Type": "application/json",
             "User-Agent": "relayhub-python/1.0.1",
             **self._config.default_headers,
