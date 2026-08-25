@@ -25,6 +25,8 @@ async def enqueue_due_retries(db: AsyncSession, *, queue_client: QueueClient, no
     duplicate message, not a duplicate delivery, because only one claim can succeed.
     """
     now = now or datetime.now(timezone.utc)
+    # tenant-scope: safe - internal Celery Beat scheduler, deliberately platform-wide
+    # (scans every org's due retries in one tick); never reachable from a user request.
     result = await db.execute(
         select(DeliveryJob).where(
             DeliveryJob.status == DeliveryJobStatus.RETRYING.value,
