@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -37,6 +38,55 @@ func TestSendsXRelayHubApiKeyHeaderMatchingBackendAuthDependency(t *testing.T) {
 	// which the backend's API-key auth dependency never reads -- every real request 401'd.
 	if capturedAuthHeader != "" {
 		t.Errorf("expected no Authorization header, got %q", capturedAuthHeader)
+	}
+}
+
+func TestSendsAuthorizationBearerForAJWTSessionToken(t *testing.T) {
+	// CLI login/whoami/dashboard-equivalent commands authenticate with a JWT
+	// access token from POST /v1/auth/login, and every one of those backend
+	// routes requires Authorization: Bearer, not X-RelayHub-Api-Key.
+	var capturedAPIKeyHeader, capturedAuthHeader string
+	jwtShaped := "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyXzEyMyJ9.c2lnbmF0dXJlLWJ5dGVz"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedAPIKeyHeader = r.Header.Get("X-RelayHub-Api-Key")
+		capturedAuthHeader = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(Endpoint{ID: "ep_123", Name: "Test"})
+	}))
+	defer server.Close()
+	client := New(jwtShaped, WithBaseURL(server.URL), WithClientMaxRetries(0))
+
+	_, err := client.Endpoints.Get(context.Background(), "ep_123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if capturedAuthHeader != "Bearer "+jwtShaped {
+		t.Errorf("expected Authorization: Bearer %s, got %q", jwtShaped, capturedAuthHeader)
+	}
+	// Regression guard: before this fix, every JWT-session CLI command 403'd
+	// against the real backend with "Not authenticated", even with a valid token.
+	if capturedAPIKeyHeader != "" {
+		t.Errorf("expected no X-RelayHub-Api-Key header, got %q", capturedAPIKeyHeader)
+	}
+}
+
+func TestSendsXRelayHubApiKeyForARealRelayHubApiKeyShape(t *testing.T) {
+	var capturedAPIKeyHeader string
+	realShapedKey := "rh_test_" + strings.Repeat("a", 43)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedAPIKeyHeader = r.Header.Get("X-RelayHub-Api-Key")
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(Endpoint{ID: "ep_123", Name: "Test"})
+	}))
+	defer server.Close()
+	client := New(realShapedKey, WithBaseURL(server.URL), WithClientMaxRetries(0))
+
+	_, err := client.Endpoints.Get(context.Background(), "ep_123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if capturedAPIKeyHeader != realShapedKey {
+		t.Errorf("expected X-RelayHub-Api-Key %s, got %q", realShapedKey, capturedAPIKeyHeader)
 	}
 }
 
