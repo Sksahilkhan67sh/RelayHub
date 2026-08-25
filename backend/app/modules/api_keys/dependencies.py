@@ -31,6 +31,8 @@ async def get_api_key_context(
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Missing X-RelayHub-Api-Key header")
 
     key_hash = hash_api_key(x_relayhub_api_key)
+    # tenant-scope: safe - this IS the API-key auth lookup; key_hash is a hash of the caller's own
+    # secret, and organization_id is the OUTPUT of this lookup, not an input to filter by.
     key = (await db.execute(select(ApiKey).where(ApiKey.key_hash == key_hash))).scalar_one_or_none()
 
     if not key:
