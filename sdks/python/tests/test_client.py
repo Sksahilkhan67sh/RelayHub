@@ -38,6 +38,45 @@ def test_sends_x_relayhub_api_key_header_matching_backend_auth_dependency():
     assert "authorization" not in captured["headers"]
 
 
+def test_sends_x_relayhub_api_key_for_a_real_relayhub_api_key_shape():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["headers"] = request.headers
+        return json_response(200, {"id": "ep_123", "name": "Test"})
+
+    real_shaped_key = "rh_test_" + "a" * 43  # matches generate_api_key's actual output shape
+    http_client = httpx.Client(transport=httpx.MockTransport(handler))
+    client = RelayHubClient(api_key=real_shaped_key, http_client=http_client, max_retries=0)
+    client.endpoints.get("ep_123")
+
+    assert captured["headers"].get("x-relayhub-api-key") == real_shaped_key
+    assert "authorization" not in captured["headers"]
+
+
+def test_sends_authorization_bearer_for_a_jwt_session_token():
+    """CLI login/whoami/dashboard-equivalent commands authenticate with a JWT
+    access token from POST /v1/auth/login, and every one of those backend
+    routes requires Authorization: Bearer, not X-RelayHub-Api-Key."""
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["headers"] = request.headers
+        return json_response(200, {"id": "ep_123", "name": "Test"})
+
+    # Shape of a real access token: header.payload.signature, each segment
+    # base64url. Not a real signed token, just JWT-shaped for this test.
+    jwt_shaped = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyXzEyMyJ9.c2lnbmF0dXJlLWJ5dGVz"
+    http_client = httpx.Client(transport=httpx.MockTransport(handler))
+    client = RelayHubClient(api_key=jwt_shaped, http_client=http_client, max_retries=0)
+    client.endpoints.get("ep_123")
+
+    assert captured["headers"].get("authorization") == f"Bearer {jwt_shaped}"
+    # Regression guard: before this fix, every JWT-session CLI command 403'd
+    # against the real backend with "Not authenticated", even with a valid token.
+    assert "x-relayhub-api-key" not in captured["headers"]
+
+
 def test_successful_get_returns_parsed_json():
     def handler(request: httpx.Request) -> httpx.Response:
         return json_response(200, {"id": "ep_123", "name": "Test"})
