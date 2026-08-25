@@ -388,6 +388,7 @@ async def force_retry_delivery_job(
     status, not just dead_letter -- an admin might need to unstick a job wedged in
     'processing' after a worker crash, which the customer-facing endpoint can't do.
     """
+    # tenant-scope: safe - platform admin only (force_requeue), route requires require_platform_admin
     job = (await db.execute(select(DeliveryJob).where(DeliveryJob.id == job_id))).scalar_one_or_none()
     if not job:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Delivery job not found")
@@ -424,6 +425,7 @@ async def force_retry_delivery_job(
 async def force_cancel_delivery_job(
     db: AsyncSession, *, job_id: uuid.UUID, actor_user_id: uuid.UUID, ip_address: str | None
 ) -> DeliveryJob:
+    # tenant-scope: safe - platform admin only (force_cancel), route requires require_platform_admin
     job = (await db.execute(select(DeliveryJob).where(DeliveryJob.id == job_id))).scalar_one_or_none()
     if not job:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Delivery job not found")
@@ -540,7 +542,7 @@ async def create_abuse_report(db: AsyncSession, *, organization_id: uuid.UUID, r
 
 
 async def list_abuse_reports(db: AsyncSession, *, status_filter: str | None = None) -> list[AbuseReport]:
-    query = select(AbuseReport).order_by(AbuseReport.created_at.desc())
+    query = select(AbuseReport).order_by(AbuseReport.created_at.desc())  # tenant-scope: safe - platform admin only, route requires require_platform_admin
     if status_filter:
         query = query.where(AbuseReport.status == status_filter)
     return list((await db.execute(query)).scalars().all())
@@ -555,6 +557,7 @@ async def admin_search_delivery_jobs(
     Every other logs/search function in this codebase (Phase 3h) DOES scope to one
     org; this function is the one intentional, clearly-marked exception.
     """
+    # tenant-scope: safe - platform admin only; org filter applied conditionally below when provided
     query = select(DeliveryJob).where(DeliveryJob.deleted_at.is_(None)).order_by(DeliveryJob.created_at.desc()).limit(limit).offset(offset)
     if organization_id is not None:
         query = query.where(DeliveryJob.organization_id == organization_id)
@@ -567,6 +570,7 @@ async def resolve_abuse_report(
     db: AsyncSession, *, report_id: uuid.UUID, new_status: str, resolution_notes: str | None,
     actor_user_id: uuid.UUID, ip_address: str | None,
 ) -> AbuseReport:
+    # tenant-scope: safe - platform admin only, route requires require_platform_admin
     report = (await db.execute(select(AbuseReport).where(AbuseReport.id == report_id))).scalar_one_or_none()
     if not report:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Abuse report not found")
