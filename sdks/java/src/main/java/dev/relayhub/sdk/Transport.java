@@ -24,6 +24,41 @@ import java.util.stream.Collectors;
 final class Transport {
     private static final Set<Integer> RETRYABLE_STATUS = Set.of(429, 500, 502, 503, 504);
 
+    /**
+     * True for RelayHub JWT access tokens (dashboard user sessions from POST
+     * /v1/auth/login or /v1/auth/refresh), false for RelayHub API keys.
+     *
+     * SDK fix (Phase 4, SDK verification): this transport used to send every
+     * credential via X-RelayHub-Api-Key unconditionally. That's correct for real
+     * API keys, but the CLI's login/whoami/dashboard-equivalent commands
+     * authenticate with a JWT access token, and those backend routes require
+     * Authorization: Bearer (app/modules/auth/dependencies.py) -- they don't
+     * accept X-RelayHub-Api-Key at all. Real API keys are issued as
+     * rh_&lt;env&gt;_&lt;base64url secret&gt; (app/core/security.py's
+     * generate_api_key) and never contain a dot, so this check cannot misroute a
+     * real key.
+     *
+     * NOTE: this fix could not be compiled or tested in the environment it was
+     * written in -- Maven Central was not reachable, so `mvn compile`/`mvn test`
+     * both failed before reaching this code. It mirrors the identical,
+     * build-and-test-verified fix applied to the Node, Python, and Go SDKs
+     * exactly (same detection logic, same header-selection logic), but should be
+     * compiled and run through the existing test suite before being treated as
+     * verified for this SDK specifically.
+     */
+    private static boolean isJwt(String credential) {
+        String[] parts = credential.split("\\.", -1);
+        if (parts.length != 3) {
+            return false;
+        }
+        for (String part : parts) {
+            if (part.isEmpty() || !part.chars().allMatch(c -> Character.isLetterOrDigit(c) || c == '-' || c == '_')) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private final String baseUrl;
     private final String apiKey;
     private final Duration timeout;
@@ -118,11 +153,10 @@ final class Transport {
         for (int attempt = 0; attempt <= retries; attempt++) {
             HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(url))
                     .timeout(effectiveTimeout)
-                    // See the matching comment in the Node SDK's transport.ts -- the backend's
-                    // API-key auth dependency (app/modules/api_keys/dependencies.py) reads ONLY
-                    // this header. Authorization: Bearer is reserved for dashboard user JWT
-                    // sessions, a separate auth path this client never uses.
-                    .header("X-RelayHub-Api-Key", apiKey)
+                    // See isJwt() above: API keys go on X-RelayHub-Api-Key
+                    // (app/modules/api_keys/dependencies.py), JWT sessions go on
+                    // Authorization: Bearer (app/modules/auth/dependencies.py).
+                    .header(isJwt(apiKey) ? "Authorization" : "X-RelayHub-Api-Key", isJwt(apiKey) ? "Bearer " + apiKey : apiKey)
                     .header("Content-Type", "application/json")
                     .header("User-Agent", "relayhub-java/1.0.1");
             defaultHeaders.forEach(builder::header);
