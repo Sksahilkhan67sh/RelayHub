@@ -124,6 +124,9 @@ async def trigger_alert(
         cutoff = now - timedelta(minutes=rule.throttle_window_minutes)
 
         recent = (
+            # tenant-scope: safe - dedup_key is built as f"{organization_id}:..." above
+            # (_build_dedup_key), so this filter already is an organization_id filter in
+            # effect; alert_rule_id also came from the org-scoped query just above.
             await db.execute(
                 select(AlertEvent).where(
                     AlertEvent.dedup_key == dedup_key,
