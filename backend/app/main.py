@@ -31,6 +31,7 @@ from app.modules.endpoints.routes import router as endpoints_router
 from app.modules.events.routes import router as events_router
 from app.modules.insights.routes import router as insights_intelligence_router
 from app.modules.logs.routes import router as logs_router
+from app.modules.newsletter.routes import router as newsletter_router
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -103,6 +104,7 @@ app.include_router(billing_router, prefix=settings.API_V1_PREFIX)
 app.include_router(admin_router, prefix=settings.API_V1_PREFIX)
 app.include_router(content_admin_router, prefix=settings.API_V1_PREFIX)
 app.include_router(content_public_router, prefix=settings.API_V1_PREFIX)
+app.include_router(newsletter_router, prefix=settings.API_V1_PREFIX)
 
 
 @app.get("/health/live", tags=["health"])
