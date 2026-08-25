@@ -87,6 +87,13 @@ jobs:
         working-directory: backend
         env:
           DATABASE_URL: postgresql+asyncpg://relayhub:relayhub@localhost:5432/relayhub_test
+          # Required Settings fields with no default (app/core/config.py). Unlike the
+          # pytest step below, this runs the `alembic` CLI directly -- it never imports
+          # tests/conftest.py, so conftest's os.environ.setdefault(...) for these two
+          # never applies here. Dummy CI-only values, matching conftest.py's own values
+          # for consistency; not real secrets.
+          SECRET_KEY: test-secret-key-not-for-production
+          ENCRYPTION_MASTER_KEY: 2jTG0yvUfKASUN5PNtSlYVG5mR_-uXOqbVg63m70fIU=
         run: alembic upgrade head
       - name: Tests (real PostgreSQL, not SQLite)
         working-directory: backend
