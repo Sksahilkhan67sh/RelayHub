@@ -60,6 +60,28 @@ services:
     volumes:
       - ../../backend:/app
 
+  # G-1 fix (Phase 4A): analyze_endpoint_health / analyze_all_endpoints are routed to
+  # the "insights" queue (see app/workers/celery_app.py's task_routes), but the
+  # `worker` service above has no `-Q` flag, so it only ever consumes the default
+  # queue. Without this service, Beat schedules insights tasks and they queue up in
+  # Redis forever, unconsumed -- the entire AI/insights pipeline (health snapshots,
+  # anomalies, incidents, RCA, AI recommendations) silently never runs. This service
+  # is identical to `worker` except for the queue it listens on.
+  worker-insights:
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile
+    env_file:
+      - ../../backend/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: celery -A app.workers.celery_app worker -Q insights --loglevel=info
+    volumes:
+      - ../../backend:/app
+
   beat:
     build:
       context: ../../backend
