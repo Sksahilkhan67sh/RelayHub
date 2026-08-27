@@ -15,6 +15,7 @@ from .resources.deliveries import DeliveriesResource
 from .resources.dlq import DlqResource
 from .resources.endpoints import EndpointsResource
 from .resources.events import EventsResource
+from .resources.insights import InsightsResource
 from .resources.notifications import NotificationsResource
 from .resources.organizations import OrganizationsResource
 
@@ -77,6 +78,7 @@ class RelayHubClient:
         self.deliveries = DeliveriesResource(transport)
         self.dlq = DlqResource(transport)
         self.analytics = AnalyticsResource(transport)
+        self.insights = InsightsResource(transport)
         self.billing = BillingResource(transport)
         self.notifications = NotificationsResource(transport)
         self.audit = AuditResource(transport)
