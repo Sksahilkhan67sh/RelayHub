@@ -332,4 +332,91 @@ public final class Models {
         public String ipAddress;
         public String createdAt;
     }
+
+    /** Mirrors backend/app/modules/insights/schemas.py::EndpointHealthSnapshotOut. */
+    public static class EndpointHealthSnapshot {
+        public String id;
+        public String endpointId;
+        public String windowStart;
+        public String windowEnd;
+        public String status;
+        public Double healthScore;
+        public double confidence;
+        public int sampleSize;
+        public Double successRate;
+        public Double failureRate;
+        public Double http4xxRate;
+        public Double http5xxRate;
+        public Double timeoutRate;
+        public Double retryRate;
+        public Double dlqRate;
+        public Double latencyP50Ms;
+        public Double latencyP95Ms;
+        public Map<String, Object> supportingSignals;
+    }
+
+    public static class InsightAnomaly {
+        public String id;
+        public String endpointId;
+        public String metric;
+        public String direction;
+        public double observedValue;
+        public double baselineValue;
+        public double delta;
+        public String observedAt;
+        public double confidence;
+        public int sampleSize;
+        public List<Object> evidence;
+        public String incidentId;
+    }
+
+    /** {@code source} is "deterministic" or "ai" -- keep this distinction visible in anything built on top of this type. */
+    public static class RootCauseAnalysis {
+        public String id;
+        public String source;
+        public String likelyCause;
+        public String confidenceLevel;
+        public double confidenceScore;
+        public List<Object> evidence;
+        public List<String> recommendations;
+        public String aiProvider;
+        public String aiModel;
+        public String createdAt;
+    }
+
+    public static class Incident {
+        public String id;
+        public String endpointId;
+        public String status;
+        public String failureCategory;
+        public String severity;
+        public String title;
+        public String summary;
+        public String openedAt;
+        public String recoveringSince;
+        public String resolvedAt;
+        public String lastSignalAt;
+    }
+
+    public static class IncidentDetail extends Incident {
+        public List<InsightAnomaly> anomalies;
+        public List<RootCauseAnalysis> rcaEntries;
+    }
+
+    public static class Recommendations {
+        public String incidentId;
+        public List<String> recommendations;
+    }
+
+    public static class IncidentTimelineEvent {
+        public String type;
+        public String at;
+        public String detail;
+    }
+
+    public static class IncidentTimeline {
+        public String incidentId;
+        public String status;
+        public List<IncidentTimelineEvent> events;
+    }
 }
