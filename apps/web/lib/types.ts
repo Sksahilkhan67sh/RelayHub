@@ -548,3 +548,26 @@ export interface IncidentTimelineOut {
   events: TimelineEventOut[];
 }
 
+export interface CopilotChatTurn {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface CopilotChatRequest {
+  message: string;
+  history: CopilotChatTurn[];
+  incident_id?: string | null;
+}
+
+export interface CopilotCitation {
+  incident_id: string;
+  label: string;
+}
+
+export interface CopilotChatResponse {
+  answer: string;
+  citations: CopilotCitation[];
+  grounded: boolean;
+  disclaimer: string;
+}
+
