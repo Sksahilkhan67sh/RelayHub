@@ -316,3 +316,93 @@ export interface AuditLogOut {
   ip_address: string | null;
   created_at: string;
 }
+
+/**
+ * Phase 3 AI Intelligence layer types, mirroring
+ * backend/app/modules/insights/schemas.py.
+ */
+export interface EndpointHealthSnapshotOut {
+  id: string;
+  endpoint_id: string;
+  window_start: string;
+  window_end: string;
+  status: string;
+  health_score: number | null;
+  confidence: number;
+  sample_size: number;
+  success_rate: number | null;
+  failure_rate: number | null;
+  http_4xx_rate: number | null;
+  http_5xx_rate: number | null;
+  timeout_rate: number | null;
+  retry_rate: number | null;
+  dlq_rate: number | null;
+  latency_p50_ms: number | null;
+  latency_p95_ms: number | null;
+  supporting_signals: Record<string, unknown>;
+}
+
+export interface InsightAnomalyOut {
+  id: string;
+  endpoint_id: string | null;
+  metric: string;
+  direction: string;
+  observed_value: number;
+  baseline_value: number;
+  delta: number;
+  observed_at: string;
+  confidence: number;
+  sample_size: number;
+  evidence: unknown[];
+  incident_id: string | null;
+}
+
+/** `source` is "deterministic" | "ai" -- keep this distinction visible in any UI/output built on top of this. */
+export interface RootCauseAnalysisOut {
+  id: string;
+  source: string;
+  likely_cause: string;
+  confidence_level: string;
+  confidence_score: number;
+  evidence: unknown[];
+  recommendations: string[];
+  ai_provider: string | null;
+  ai_model: string | null;
+  created_at: string;
+}
+
+export interface IncidentOut {
+  id: string;
+  endpoint_id: string | null;
+  status: string;
+  failure_category: string;
+  severity: string;
+  title: string;
+  summary: string;
+  opened_at: string;
+  recovering_since: string | null;
+  resolved_at: string | null;
+  last_signal_at: string;
+}
+
+export interface IncidentDetailOut extends IncidentOut {
+  anomalies: InsightAnomalyOut[];
+  rca_entries: RootCauseAnalysisOut[];
+}
+
+export interface RecommendationsOut {
+  incident_id: string;
+  recommendations: string[];
+}
+
+export interface IncidentTimelineEventOut {
+  type: string;
+  at: string;
+  detail: string;
+}
+
+export interface IncidentTimelineOut {
+  incident_id: string;
+  status: string;
+  events: IncidentTimelineEventOut[];
+}
