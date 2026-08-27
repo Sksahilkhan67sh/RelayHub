@@ -5,6 +5,7 @@ export const metadata: Metadata = {
   title: "Terms of Service — RelayHub",
   description: "The terms governing use of the RelayHub platform.",
   alternates: { canonical: "/terms" },
+  openGraph: { title: "Terms of Service — RelayHub", description: "The terms governing use of the RelayHub platform.", url: "/terms" },
 };
 
 export default function TermsPage() {
