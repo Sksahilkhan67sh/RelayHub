@@ -315,3 +315,92 @@ type AuditLog struct {
 	IPAddress    *string        `json:"ip_address"`
 	CreatedAt    string         `json:"created_at"`
 }
+
+// EndpointHealthSnapshot mirrors backend/app/modules/insights/schemas.py::EndpointHealthSnapshotOut.
+type EndpointHealthSnapshot struct {
+	ID                string         `json:"id"`
+	EndpointID        string         `json:"endpoint_id"`
+	WindowStart       string         `json:"window_start"`
+	WindowEnd         string         `json:"window_end"`
+	Status            string         `json:"status"`
+	HealthScore       *float64       `json:"health_score"`
+	Confidence        float64        `json:"confidence"`
+	SampleSize        int            `json:"sample_size"`
+	SuccessRate       *float64       `json:"success_rate"`
+	FailureRate       *float64       `json:"failure_rate"`
+	Http4xxRate       *float64       `json:"http_4xx_rate"`
+	Http5xxRate       *float64       `json:"http_5xx_rate"`
+	TimeoutRate       *float64       `json:"timeout_rate"`
+	RetryRate         *float64       `json:"retry_rate"`
+	DlqRate           *float64       `json:"dlq_rate"`
+	LatencyP50Ms      *float64       `json:"latency_p50_ms"`
+	LatencyP95Ms      *float64       `json:"latency_p95_ms"`
+	SupportingSignals map[string]any `json:"supporting_signals"`
+}
+
+type InsightAnomaly struct {
+	ID            string  `json:"id"`
+	EndpointID    *string `json:"endpoint_id"`
+	Metric        string  `json:"metric"`
+	Direction     string  `json:"direction"`
+	ObservedValue float64 `json:"observed_value"`
+	BaselineValue float64 `json:"baseline_value"`
+	Delta         float64 `json:"delta"`
+	ObservedAt    string  `json:"observed_at"`
+	Confidence    float64 `json:"confidence"`
+	SampleSize    int     `json:"sample_size"`
+	Evidence      []any   `json:"evidence"`
+	IncidentID    *string `json:"incident_id"`
+}
+
+// RootCauseAnalysis -- Source is "deterministic" or "ai"; keep this
+// distinction visible in anything built on top of this type.
+type RootCauseAnalysis struct {
+	ID              string   `json:"id"`
+	Source          string   `json:"source"`
+	LikelyCause     string   `json:"likely_cause"`
+	ConfidenceLevel string   `json:"confidence_level"`
+	ConfidenceScore float64  `json:"confidence_score"`
+	Evidence        []any    `json:"evidence"`
+	Recommendations []string `json:"recommendations"`
+	AIProvider      *string  `json:"ai_provider"`
+	AIModel         *string  `json:"ai_model"`
+	CreatedAt       string   `json:"created_at"`
+}
+
+type Incident struct {
+	ID              string  `json:"id"`
+	EndpointID      *string `json:"endpoint_id"`
+	Status          string  `json:"status"`
+	FailureCategory string  `json:"failure_category"`
+	Severity        string  `json:"severity"`
+	Title           string  `json:"title"`
+	Summary         string  `json:"summary"`
+	OpenedAt        string  `json:"opened_at"`
+	RecoveringSince *string `json:"recovering_since"`
+	ResolvedAt      *string `json:"resolved_at"`
+	LastSignalAt    string  `json:"last_signal_at"`
+}
+
+type IncidentDetail struct {
+	Incident
+	Anomalies  []InsightAnomaly    `json:"anomalies"`
+	RCAEntries []RootCauseAnalysis `json:"rca_entries"`
+}
+
+type Recommendations struct {
+	IncidentID      string   `json:"incident_id"`
+	Recommendations []string `json:"recommendations"`
+}
+
+type IncidentTimelineEvent struct {
+	Type   string `json:"type"`
+	At     string `json:"at"`
+	Detail string `json:"detail"`
+}
+
+type IncidentTimeline struct {
+	IncidentID string                  `json:"incident_id"`
+	Status     string                  `json:"status"`
+	Events     []IncidentTimelineEvent `json:"events"`
+}
