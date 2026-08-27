@@ -9,6 +9,7 @@ export const COMMAND_NAMES = [
   "replay",
   "dlq",
   "analytics",
+  "insights",
   "billing",
   "notifications",
   "config",
