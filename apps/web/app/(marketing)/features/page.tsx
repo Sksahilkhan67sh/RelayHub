@@ -119,9 +119,8 @@ const SECTIONS: FeatureSection[] = [
   {
     icon: Sparkles,
     title: "AI Copilot",
-    body: "An assistant that can explain a failing delivery, suggest a retry policy, or draft an alert rule from a plain-language description.",
-    bullets: ["Not yet available", "On the roadmap -- see the Changelog for progress"],
-    status: "coming-soon",
+    body: "Ask in plain language what's failing and why. Copilot answers from your own account's incidents, root-cause analysis, and endpoint health -- every answer cites the specific incident it's grounded in.",
+    bullets: ["Available now from the Intelligence page", "Answers are grounded in your account's own data, with clickable citations", "Falls back gracefully with no answer rather than guessing when data is insufficient"],
   },
   {
     icon: Package,
