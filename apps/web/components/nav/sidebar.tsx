@@ -26,6 +26,7 @@ import {
   Newspaper,
   Briefcase,
   Sparkles,
+  ServerCog,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { RelayHubMark } from "@/components/ui/logo";
@@ -60,6 +61,7 @@ export const SETTINGS_ITEMS = [
 
 export const ADMIN_ITEMS = [
   { href: "/admin", label: "Overview", icon: LayoutGrid },
+  { href: "/admin/operations", label: "Operations", icon: ServerCog },
   { href: "/admin/organizations", label: "Organizations", icon: Building2 },
   { href: "/admin/feature-flags", label: "Feature Flags", icon: Flag },
   { href: "/admin/abuse-reports", label: "Abuse Reports", icon: AlertTriangle },
