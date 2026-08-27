@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AlertTriangle } from "lucide-react";
+import { ServerCog } from "lucide-react";
 import { api, ApiError } from "@/lib/api-client";
 import type { SystemHealthOut, BillingOverviewOut } from "@/lib/types";
 import { Card, CardHeader, CardBody } from "@/components/ui/card";
 import { KpiCard } from "@/components/dashboard/kpi-card";
 import { StatusDot } from "@/components/ui/status-dot";
 import { Skeleton } from "@/components/ui/skeleton";
+import { EmptyState } from "@/components/ui/empty-state";
 
 export default function AdminOverviewPage() {
   const [health, setHealth] = useState<SystemHealthOut | null>(null);
@@ -50,12 +51,6 @@ export default function AdminOverviewPage() {
         </p>
       </div>
 
-      <div className="flex items-center gap-2 rounded border border-graphite-200 bg-graphite-50 px-3 py-2 text-xs text-graphite-600 dark:border-graphite-800 dark:bg-graphite-800/40 dark:text-graphite-400">
-        <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-        Worker registry / live process health isn&apos;t tracked yet (no heartbeat table exists) -- what&apos;s shown
-        below is real database and queue-depth data only.
-      </div>
-
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Card>
           <CardBody className="flex flex-col gap-1">
@@ -67,6 +62,56 @@ export default function AdminOverviewPage() {
         <KpiCard label="Retrying jobs" value={health.queue_depth.retrying} tone={health.queue_depth.retrying ? "amber" : undefined} />
         <KpiCard label="Dead letter jobs" value={health.queue_depth.dead_letter} tone={health.queue_depth.dead_letter ? "red" : undefined} />
       </div>
+
+      <Card>
+        <CardHeader>
+          <h2 className="text-xs font-medium text-graphite-700 dark:text-graphite-200">Worker fleet</h2>
+        </CardHeader>
+        {health.worker_health.workers.length === 0 ? (
+          <EmptyState
+            icon={ServerCog}
+            title="No workers reporting"
+            description="No Celery worker process has sent a heartbeat yet. Deliveries may not be processing -- check that a worker process is running and can reach the database."
+          />
+        ) : (
+          <>
+            <CardBody className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <KpiCard label="Healthy workers" value={health.worker_health.healthy_count} />
+              <KpiCard
+                label="Unhealthy workers"
+                value={health.worker_health.unhealthy_count}
+                tone={health.worker_health.unhealthy_count ? "red" : undefined}
+              />
+            </CardBody>
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="border-b border-graphite-100 text-graphite-500 dark:border-graphite-800">
+                  <th className="px-4 py-2 font-medium">Worker</th>
+                  <th className="px-4 py-2 font-medium">Host</th>
+                  <th className="px-4 py-2 font-medium">PID</th>
+                  <th className="px-4 py-2 font-medium">Last heartbeat</th>
+                  <th className="px-4 py-2 font-medium">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {health.worker_health.workers.map((w) => (
+                  <tr key={w.worker_id} className="border-b border-graphite-50 last:border-0 dark:border-graphite-800/60">
+                    <td className="px-4 py-2.5 font-mono text-graphite-950 dark:text-graphite-50">{w.worker_id}</td>
+                    <td className="px-4 py-2.5 text-graphite-600 dark:text-graphite-400">{w.hostname}</td>
+                    <td className="tabular px-4 py-2.5 text-graphite-600 dark:text-graphite-400">{w.pid}</td>
+                    <td className="tabular px-4 py-2.5 text-graphite-600 dark:text-graphite-400">
+                      {new Date(w.last_heartbeat_at).toLocaleString()}
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <StatusDot color={w.healthy ? "green" : "red"} label={w.healthy ? "Healthy" : "Unhealthy"} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
+        )}
+      </Card>
 
       <Card>
         <CardHeader>
