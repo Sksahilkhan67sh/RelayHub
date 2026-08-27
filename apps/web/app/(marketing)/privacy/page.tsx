@@ -5,6 +5,7 @@ export const metadata: Metadata = {
   title: "Privacy Policy — RelayHub",
   description: "How RelayHub collects, uses, and protects your data.",
   alternates: { canonical: "/privacy" },
+  openGraph: { title: "Privacy Policy — RelayHub", description: "How RelayHub collects, uses, and protects your data.", url: "/privacy" },
 };
 
 export default function PrivacyPage() {
