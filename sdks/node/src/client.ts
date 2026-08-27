@@ -7,6 +7,7 @@ import { EventsResource } from "./resources/events.js";
 import { DeliveriesResource } from "./resources/deliveries.js";
 import { DlqResource } from "./resources/dlq.js";
 import { AnalyticsResource } from "./resources/analytics.js";
+import { InsightsResource } from "./resources/insights.js";
 import { BillingResource } from "./resources/billing.js";
 import { NotificationsResource } from "./resources/notifications.js";
 import { AuditResource } from "./resources/audit.js";
@@ -33,6 +34,7 @@ export class RelayHubClient {
   readonly deliveries: DeliveriesResource;
   readonly dlq: DlqResource;
   readonly analytics: AnalyticsResource;
+  readonly insights: InsightsResource;
   readonly billing: BillingResource;
   readonly notifications: NotificationsResource;
   readonly audit: AuditResource;
@@ -62,6 +64,7 @@ export class RelayHubClient {
     this.deliveries = new DeliveriesResource(transport);
     this.dlq = new DlqResource(transport);
     this.analytics = new AnalyticsResource(transport);
+    this.insights = new InsightsResource(transport);
     this.billing = new BillingResource(transport);
     this.notifications = new NotificationsResource(transport);
     this.audit = new AuditResource(transport);
