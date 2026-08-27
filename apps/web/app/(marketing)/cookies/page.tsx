@@ -5,6 +5,7 @@ export const metadata: Metadata = {
   title: "Cookie Policy — RelayHub",
   description: "What RelayHub stores in your browser, and why.",
   alternates: { canonical: "/cookies" },
+  openGraph: { title: "Cookie Policy — RelayHub", description: "What RelayHub stores in your browser, and why.", url: "/cookies" },
 };
 
 export default function CookiesPage() {
