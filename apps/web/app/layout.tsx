@@ -30,6 +30,25 @@ export const metadata: Metadata = {
   twitter: { card: "summary_large_image" },
 };
 
+// Site-wide Organization + WebSite structured data. Kept separate from any
+// page-specific JSON-LD (e.g. the homepage's SoftwareApplication block, blog
+// posts' Article blocks) -- this describes the site/publisher identity and
+// belongs on every page, not just one.
+const organizationJsonLd = {
+  "@context": "https://schema.org",
+  "@type": "Organization",
+  name: "RelayHub",
+  url: "https://relayhub.dev",
+  logo: "https://relayhub.dev/logo.png",
+};
+
+const websiteJsonLd = {
+  "@context": "https://schema.org",
+  "@type": "WebSite",
+  name: "RelayHub",
+  url: "https://relayhub.dev",
+};
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${plexSans.variable} ${plexMono.variable}`} suppressHydrationWarning>
@@ -37,6 +56,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <Script id="theme-init" strategy="beforeInteractive">
           {THEME_INIT_SCRIPT}
         </Script>
+        <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(organizationJsonLd) }} />
+        <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(websiteJsonLd) }} />
       </head>
       <body className="font-sans text-sm">
         <ThemeProvider>
