@@ -339,10 +339,40 @@ export interface QueueDepthOut {
   failed_last_hour: number;
 }
 
+export interface WorkerInstanceOut {
+  worker_id: string;
+  hostname: string;
+  pid: number;
+  last_heartbeat_at: string;
+  healthy: boolean;
+}
+
+export interface WorkerHealthOut {
+  healthy_count: number;
+  unhealthy_count: number;
+  workers: WorkerInstanceOut[];
+}
+
 export interface SystemHealthOut {
   database_ok: boolean;
   queue_depth: QueueDepthOut;
+  worker_health: WorkerHealthOut;
   checked_at: string;
+}
+
+export interface DeliveryMetricsOut {
+  window_seconds: number;
+  avg_delivery_latency_ms: number | null;
+  p95_delivery_latency_ms: number | null;
+  retry_rate: number | null;
+  dlq_rate: number | null;
+  stuck_jobs_count: number;
+  sample_size: number;
+}
+
+export interface ForceActionResponse {
+  id: string;
+  status: string;
 }
 
 export interface BillingOverviewOut {
