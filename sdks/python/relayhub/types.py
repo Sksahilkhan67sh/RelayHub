@@ -327,3 +327,90 @@ class AuditLogOut(TypedDict):
     metadata: dict[str, Any]
     ip_address: str | None
     created_at: str
+
+
+class EndpointHealthSnapshotOut(TypedDict):
+    """Mirrors backend/app/modules/insights/schemas.py::EndpointHealthSnapshotOut."""
+
+    id: str
+    endpoint_id: str
+    window_start: str
+    window_end: str
+    status: str
+    health_score: float | None
+    confidence: float
+    sample_size: int
+    success_rate: float | None
+    failure_rate: float | None
+    http_4xx_rate: float | None
+    http_5xx_rate: float | None
+    timeout_rate: float | None
+    retry_rate: float | None
+    dlq_rate: float | None
+    latency_p50_ms: float | None
+    latency_p95_ms: float | None
+    supporting_signals: dict[str, Any]
+
+
+class InsightAnomalyOut(TypedDict):
+    id: str
+    endpoint_id: str | None
+    metric: str
+    direction: str
+    observed_value: float
+    baseline_value: float
+    delta: float
+    observed_at: str
+    confidence: float
+    sample_size: int
+    evidence: list[Any]
+    incident_id: str | None
+
+
+class RootCauseAnalysisOut(TypedDict):
+    id: str
+    source: str  # "deterministic" | "ai" -- keep this distinction visible wherever you render it
+    likely_cause: str
+    confidence_level: str
+    confidence_score: float
+    evidence: list[Any]
+    recommendations: list[str]
+    ai_provider: str | None
+    ai_model: str | None
+    created_at: str
+
+
+class IncidentOut(TypedDict):
+    id: str
+    endpoint_id: str | None
+    status: str
+    failure_category: str
+    severity: str
+    title: str
+    summary: str
+    opened_at: str
+    recovering_since: str | None
+    resolved_at: str | None
+    last_signal_at: str
+
+
+class IncidentDetailOut(IncidentOut):
+    anomalies: list[InsightAnomalyOut]
+    rca_entries: list[RootCauseAnalysisOut]
+
+
+class RecommendationsOut(TypedDict):
+    incident_id: str
+    recommendations: list[str]
+
+
+class IncidentTimelineEventOut(TypedDict):
+    type: str
+    at: str
+    detail: str
+
+
+class IncidentTimelineOut(TypedDict):
+    incident_id: str
+    status: str
+    events: list[IncidentTimelineEventOut]
