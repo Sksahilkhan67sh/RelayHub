@@ -43,6 +43,7 @@ public final class RelayHubClient {
     private final DeliveriesResource deliveries;
     private final DlqResource dlq;
     private final AnalyticsResource analytics;
+    private final InsightsResource insights;
     private final BillingResource billing;
     private final NotificationsResource notifications;
     private final AuditResource audit;
@@ -70,6 +71,7 @@ public final class RelayHubClient {
         this.deliveries = new DeliveriesResource(transport);
         this.dlq = new DlqResource(transport);
         this.analytics = new AnalyticsResource(transport);
+        this.insights = new InsightsResource(transport);
         this.billing = new BillingResource(transport);
         this.notifications = new NotificationsResource(transport);
         this.audit = new AuditResource(transport);
@@ -83,6 +85,7 @@ public final class RelayHubClient {
     public DeliveriesResource getDeliveries() { return deliveries; }
     public DlqResource getDlq() { return dlq; }
     public AnalyticsResource getAnalytics() { return analytics; }
+    public InsightsResource getInsights() { return insights; }
     public BillingResource getBilling() { return billing; }
     public NotificationsResource getNotifications() { return notifications; }
     public AuditResource getAudit() { return audit; }
