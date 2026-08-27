@@ -9,6 +9,7 @@ import type { IncidentDetailOut, IncidentTimelineOut } from "@/lib/types";
 import { Card, CardHeader, CardBody, Badge } from "@/components/ui/card";
 import { StatusDot, statusToSignalColor } from "@/components/ui/status-dot";
 import { Skeleton } from "@/components/ui/skeleton";
+import { CopilotPanel } from "@/components/intelligence/copilot-panel";
 
 export default function IncidentDetailPage() {
   const params = useParams<{ incidentId: string }>();
@@ -213,6 +214,8 @@ export default function IncidentDetailPage() {
           </CardBody>
         </Card>
       </section>
+
+      <CopilotPanel incidentId={incident.id} title="Ask Copilot about this incident" />
     </div>
   );
 }
