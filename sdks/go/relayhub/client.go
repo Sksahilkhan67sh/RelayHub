@@ -25,6 +25,7 @@ type Client struct {
 	Deliveries    *DeliveriesService
 	DLQ           *DLQService
 	Analytics     *AnalyticsService
+	Insights      *InsightsService
 	Billing       *BillingService
 	Notifications *NotificationsService
 	Audit         *AuditService
@@ -113,6 +114,7 @@ func New(apiKey string, opts ...Option) *Client {
 		Deliveries:    &DeliveriesService{t: t},
 		DLQ:           &DLQService{t: t},
 		Analytics:     &AnalyticsService{t: t},
+		Insights:      &InsightsService{t: t},
 		Billing:       &BillingService{t: t},
 		Notifications: &NotificationsService{t: t},
 		Audit:         &AuditService{t: t},
