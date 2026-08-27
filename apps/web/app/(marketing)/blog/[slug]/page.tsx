@@ -34,8 +34,24 @@ export default async function BlogPostPage({ params }: { params: { slug: string 
   const post = await getPostBySlug(params.slug);
   if (!post) notFound();
 
+  // Built only from fields the API actually returns -- no invented author,
+  // dates, or image. dateModified is omitted when it doesn't differ from
+  // publish date rather than duplicating it.
+  const jsonLd = {
+    "@context": "https://schema.org",
+    "@type": "Article",
+    headline: post.title,
+    description: post.excerpt,
+    articleSection: post.category,
+    author: { "@type": "Person", name: post.author_name },
+    datePublished: post.published_at ?? post.created_at,
+    ...(post.updated_at !== post.created_at ? { dateModified: post.updated_at } : {}),
+    mainEntityOfPage: { "@type": "WebPage", "@id": `https://relayhub.dev/blog/${post.slug}` },
+  };
+
   return (
     <article className="mx-auto max-w-2xl px-5 py-16 sm:py-20">
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
       <Link href="/blog" className="flex w-fit items-center gap-1.5 text-xs text-graphite-500 hover:text-graphite-950 dark:hover:text-graphite-50">
         <ArrowLeft className="h-3.5 w-3.5" />
         Back to blog
