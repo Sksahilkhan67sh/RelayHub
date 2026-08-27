@@ -6,7 +6,7 @@ export default function robots(): MetadataRoute.Robots {
       {
         userAgent: "*",
         allow: "/",
-        disallow: ["/dashboard", "/settings", "/admin", "/endpoints", "/events", "/deliveries", "/dlq", "/retry-queue", "/analytics", "/alerts", "/api-keys", "/billing", "/usage", "/logs"],
+        disallow: ["/dashboard", "/settings", "/admin", "/endpoints", "/events", "/deliveries", "/dlq", "/retry-queue", "/analytics", "/alerts", "/api-keys", "/billing", "/usage", "/logs", "/intelligence"],
       },
     ],
     sitemap: "https://relayhub.dev/sitemap.xml",
