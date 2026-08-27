@@ -118,7 +118,16 @@ export default function LandingPage() {
     applicationCategory: "DeveloperApplication",
     operatingSystem: "Web",
     description: "Webhook and event delivery infrastructure with signed deliveries, automatic retries, a dead-letter queue, and full delivery logs.",
-    offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+    // Reflects the real Free/Starter/Pro tiers (components/marketing/pricing-client.tsx,
+    // sourced from backend/app/modules/billing/service.py PLAN_DEFAULTS). Enterprise is
+    // custom-quoted and excluded rather than assigned a fabricated number.
+    offers: {
+      "@type": "AggregateOffer",
+      priceCurrency: "USD",
+      lowPrice: "0",
+      highPrice: "99",
+      offerCount: "3",
+    },
   };
 
   return (
