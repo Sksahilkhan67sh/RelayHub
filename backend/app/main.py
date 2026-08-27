@@ -29,6 +29,7 @@ from app.modules.delivery.routes import router as deliveries_router
 from app.modules.dlq.routes import router as dlq_router
 from app.modules.endpoints.routes import router as endpoints_router
 from app.modules.events.routes import router as events_router
+from app.modules.insights.copilot.routes import router as insights_copilot_router
 from app.modules.insights.routes import router as insights_intelligence_router
 from app.modules.logs.routes import router as logs_router
 from app.modules.newsletter.routes import router as newsletter_router
@@ -99,6 +100,9 @@ app.include_router(analytics_router, prefix=f"{settings.API_V1_PREFIX}/insights"
 # bare /v1/insights/..., to avoid colliding with the analytics alias mounted
 # immediately above (see insights/routes.py's module docstring for why).
 app.include_router(insights_intelligence_router, prefix=settings.API_V1_PREFIX)
+# Phase 5B -- conversational copilot, mounted under the same intelligence prefix
+# (see insights/copilot/routes.py's module docstring).
+app.include_router(insights_copilot_router, prefix=settings.API_V1_PREFIX)
 app.include_router(alerts_router, prefix=settings.API_V1_PREFIX)
 app.include_router(billing_router, prefix=settings.API_V1_PREFIX)
 app.include_router(admin_router, prefix=settings.API_V1_PREFIX)
