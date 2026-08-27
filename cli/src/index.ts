@@ -11,6 +11,7 @@ import { deliveriesCommand } from "./commands/deliveries.js";
 import { replayCommand } from "./commands/replay.js";
 import { dlqCommand } from "./commands/dlq.js";
 import { analyticsCommand } from "./commands/analytics.js";
+import { insightsCommand } from "./commands/insights.js";
 import { billingCommand } from "./commands/billing.js";
 import { notificationsCommand } from "./commands/notifications.js";
 import { configCommand } from "./commands/config.js";
@@ -34,6 +35,7 @@ ${color.bold("Commands:")}
   replay <jobId>          Replay a dead-lettered delivery
   dlq                      list | get | retry | discard | export
   analytics                summary | top-endpoints | health
+  insights                  health | health-history | anomalies | incidents | incident | rca | recommendations | timeline
   billing                  plans | subscription | usage | invoices | portal
   notifications            list | create | test | delete | history  (alert rules)
   config                   get | set | path
@@ -81,6 +83,8 @@ async function main(): Promise<void> {
       return dlqCommand(args);
     case "analytics":
       return analyticsCommand(args);
+    case "insights":
+      return insightsCommand(args);
     case "billing":
       return billingCommand(args);
     case "notifications":
