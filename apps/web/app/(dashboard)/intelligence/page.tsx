@@ -7,6 +7,7 @@ import type { AnomalyOut, EndpointHealthSnapshotOut, IncidentOut } from "@/lib/t
 import { Card, CardHeader, CardBody, Badge } from "@/components/ui/card";
 import { StatusDot, statusToSignalColor } from "@/components/ui/status-dot";
 import { Skeleton, TableSkeleton } from "@/components/ui/skeleton";
+import { CopilotPanel } from "@/components/intelligence/copilot-panel";
 
 export default function IntelligencePage() {
   const [health, setHealth] = useState<EndpointHealthSnapshotOut[] | null>(null);
@@ -47,6 +48,8 @@ export default function IntelligencePage() {
           Automated health analysis, anomaly detection, and root cause analysis derived from your delivery data.
         </p>
       </div>
+
+      <CopilotPanel />
 
       <section className="flex flex-col gap-2">
         <h2 className="text-xs font-medium text-graphite-700 dark:text-graphite-200">Endpoint health</h2>
