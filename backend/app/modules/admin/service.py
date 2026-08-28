@@ -555,6 +555,23 @@ async def list_abuse_reports(db: AsyncSession, *, status_filter: str | None = No
     return list((await db.execute(query)).scalars().all())
 
 
+async def list_abuse_reports_for_org(db: AsyncSession, *, organization_id: uuid.UUID) -> list[AbuseReport]:
+    """
+    Org-facing counterpart to list_abuse_reports above. That function is
+    deliberately unscoped (global, platform-admin only); this one is the opposite
+    -- always filtered to a single org -- so an org's own OWNER/ADMIN members can
+    see reports filed against *their* organization (they're notified via
+    notify_org_admins when one is created/updated, but previously had nowhere to
+    actually go read it). Route enforces the org scope via AuthContext.
+    """
+    query = (
+        select(AbuseReport)
+        .where(AbuseReport.organization_id == organization_id)
+        .order_by(AbuseReport.created_at.desc())
+    )
+    return list((await db.execute(query)).scalars().all())
+
+
 async def admin_search_delivery_jobs(
     db: AsyncSession, *, organization_id: uuid.UUID | None = None, status_filter: str | None = None, limit: int = 50, offset: int = 0
 ) -> list[DeliveryJob]:
