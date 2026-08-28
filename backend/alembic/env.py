@@ -20,6 +20,7 @@ from app.modules.billing import models as billing_models  # noqa: F401
 from app.modules.admin import models as admin_models  # noqa: F401
 from app.modules.content import models as content_models  # noqa: F401
 from app.modules.insights import models as insights_models  # noqa: F401
+from app.modules.notifications import models as notifications_models  # noqa: F401
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
