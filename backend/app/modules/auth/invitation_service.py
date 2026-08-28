@@ -17,6 +17,7 @@ from app.modules.auth import service as auth_service
 from app.modules.auth.dependencies import AuthContext
 from app.modules.auth.models import Invitation, Membership, Organization, Role, User
 from app.modules.auth.schemas import TokenResponse
+from app.modules.notifications import service as notifications_service
 
 _STATUS_MESSAGES = {
     "accepted": "This invitation has already been accepted",
@@ -192,6 +193,21 @@ async def accept_invitation(
         metadata={"email": invitation.email, "role": invitation.role},
         ip_address=ip_address,
     )
+
+    await notifications_service.create(
+        db, organization_id=invitation.organization_id, user_id=user.id,
+        type="member.joined", title=f"Welcome to {_org.name}",
+        body=f"You joined {_org.name} as {invitation.role}.",
+        resource_type="membership", resource_id=str(membership.id),
+    )
+    await notifications_service.notify_org_admins(
+        db, organization_id=invitation.organization_id,
+        type="member.joined", title="New team member",
+        body=f"{invitation.email} joined as {invitation.role}.",
+        resource_type="membership", resource_id=str(membership.id),
+        exclude_user_id=user.id,
+    )
+
     await db.commit()
     await db.refresh(user)
     await db.refresh(membership)
@@ -242,4 +258,59 @@ async def revoke_invitation(
     )
     await db.commit()
     await db.refresh(invitation)
+    return invitation
+
+
+async def resend_invitation(
+    db: AsyncSession,
+    *,
+    organization_id: uuid.UUID,
+    invitation_id: uuid.UUID,
+    actor_user_id: uuid.UUID,
+    notification_dispatcher: NotificationDispatcher,
+    ip_address: str | None,
+) -> Invitation:
+    """Reissues a token and expiry on the same invitation row (rather than creating a
+    duplicate) and re-sends the email through the existing dispatcher. Only valid for
+    a still-pending invitation -- an accepted/revoked one should be handled via
+    create_invitation (new invite) instead, same as the UI already does."""
+    invitation = (
+        await db.execute(select(Invitation).where(Invitation.id == invitation_id, Invitation.organization_id == organization_id))
+    ).scalar_one_or_none()
+    if not invitation:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Invitation not found")
+    if invitation.status != "pending":
+        raise HTTPException(status.HTTP_409_CONFLICT, detail=_STATUS_MESSAGES.get(invitation.status, "This invitation is no longer valid"))
+
+    org = (await db.execute(select(Organization).where(Organization.id == organization_id))).scalar_one()
+
+    raw_token, token_hash = generate_secure_token()
+    invitation.hashed_token = token_hash
+    invitation.expires_at = datetime.now(timezone.utc) + timedelta(days=settings.INVITATION_TOKEN_EXPIRE_DAYS)
+
+    await audit_service.record(
+        db,
+        organization_id=organization_id,
+        actor_user_id=actor_user_id,
+        action=AuditAction.INVITATION_RESENT,
+        resource_type="invitation",
+        resource_id=str(invitation.id),
+        metadata={"email": invitation.email, "role": invitation.role},
+        ip_address=ip_address,
+    )
+    await db.commit()
+    await db.refresh(invitation)
+
+    accept_link = f"{settings.FRONTEND_URL}/accept-invitation?token={raw_token}"
+    await notification_dispatcher.send(
+        channel="email",
+        config={"to_address": invitation.email},
+        subject=f"You've been invited to join {org.name} on RelayHub",
+        message=(
+            f"You've been invited to join {org.name} on RelayHub as {invitation.role}. "
+            f"This invitation expires in {settings.INVITATION_TOKEN_EXPIRE_DAYS} days.\n\n"
+            f"{accept_link}"
+        ),
+    )
+
     return invitation
