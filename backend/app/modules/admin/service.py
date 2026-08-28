@@ -572,6 +572,33 @@ async def list_abuse_reports_for_org(db: AsyncSession, *, organization_id: uuid.
     return list((await db.execute(query)).scalars().all())
 
 
+async def create_org_self_report(
+    db: AsyncSession, *, organization_id: uuid.UUID, reason: str, reported_by_user_id: uuid.UUID
+) -> AbuseReport:
+    """
+    Lets a member file a report about their *own* organization (e.g. flagging
+    something for platform review), as opposed to create_abuse_report above,
+    which is a platform admin flagging an arbitrary org from the outside. The
+    row lands in the exact same abuse_reports table, so it shows up in the
+    platform admin's /admin/abuse-reports queue like any other report -- the
+    two creation paths are just different front doors onto the same review
+    workflow. exclude_user_id skips notifying the person who just filed it;
+    other OWNER/ADMIN members of the org still hear about it.
+    """
+    report = AbuseReport(organization_id=organization_id, reason=reason, reported_by_user_id=reported_by_user_id)
+    db.add(report)
+    await notifications_service.notify_org_admins(
+        db, organization_id=organization_id,
+        type="abuse_report.created", title="Abuse report submitted",
+        body=f"A report was submitted for your organization: {reason}",
+        resource_type="abuse_report", resource_id=str(report.id),
+        exclude_user_id=reported_by_user_id,
+    )
+    await db.commit()
+    await db.refresh(report)
+    return report
+
+
 async def admin_search_delivery_jobs(
     db: AsyncSession, *, organization_id: uuid.UUID | None = None, status_filter: str | None = None, limit: int = 50, offset: int = 0
 ) -> list[DeliveryJob]:
