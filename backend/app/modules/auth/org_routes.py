@@ -101,3 +101,17 @@ async def revoke_invitation(
         db, organization_id=auth.organization_id, invitation_id=invitation_id, actor_user_id=auth.user_id,
         ip_address=request.client.host if request.client else None,
     )
+
+
+@router.post("/invitations/{invitation_id}/resend", response_model=InvitationOut)
+async def resend_invitation(
+    invitation_id: uuid.UUID,
+    request: Request,
+    auth: AuthContext = Depends(require_role(Role.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+    notification_dispatcher: NotificationDispatcher = Depends(get_notification_dispatcher),
+):
+    return await invitation_service.resend_invitation(
+        db, organization_id=auth.organization_id, invitation_id=invitation_id, actor_user_id=auth.user_id,
+        notification_dispatcher=notification_dispatcher, ip_address=request.client.host if request.client else None,
+    )
