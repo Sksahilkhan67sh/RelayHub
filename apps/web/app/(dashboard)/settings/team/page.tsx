@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import Link from "next/link";
-import { Users, Plus, Trash2, Mail, XCircle, ArrowUpDown, Search } from "lucide-react";
+import { Users, Plus, Trash2, Mail, XCircle, RefreshCw, ArrowUpDown, Search } from "lucide-react";
 import { api, ApiError } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
 import { useToast } from "@/components/ui/toast";
@@ -144,6 +144,16 @@ export default function TeamSettingsPage() {
       toast.success(`Invitation to ${revokeTarget.email} revoked`);
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "Failed to revoke invitation");
+    }
+  }
+
+  async function handleResendInvitation(inv: InvitationOut) {
+    try {
+      await api.post(`/v1/org/invitations/${inv.id}/resend`);
+      await loadInvitations();
+      toast.success(`Invitation resent to ${inv.email}`);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Failed to resend invitation");
     }
   }
 
@@ -371,14 +381,24 @@ export default function TeamSettingsPage() {
                         <td className="tabular px-4 py-2.5 text-graphite-600 dark:text-graphite-400">{new Date(inv.expires_at).toLocaleDateString()}</td>
                         <td className="px-4 py-2.5">
                           {inv.status === "pending" && (
-                            <button
-                              onClick={() => setRevokeTarget(inv)}
-                              className="flex items-center gap-1 rounded p-1.5 text-graphite-500 hover:bg-signal-red-soft hover:text-signal-red"
-                              aria-label={`Revoke invitation to ${inv.email}`}
-                              title="Revoke"
-                            >
-                              <XCircle className="h-3.5 w-3.5" />
-                            </button>
+                            <div className="flex items-center justify-end gap-1">
+                              <button
+                                onClick={() => handleResendInvitation(inv)}
+                                className="flex items-center gap-1 rounded p-1.5 text-graphite-500 hover:bg-graphite-100 hover:text-graphite-950 dark:hover:bg-graphite-800 dark:hover:text-graphite-50"
+                                aria-label={`Resend invitation to ${inv.email}`}
+                                title="Resend"
+                              >
+                                <RefreshCw className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                onClick={() => setRevokeTarget(inv)}
+                                className="flex items-center gap-1 rounded p-1.5 text-graphite-500 hover:bg-signal-red-soft hover:text-signal-red"
+                                aria-label={`Revoke invitation to ${inv.email}`}
+                                title="Revoke"
+                              >
+                                <XCircle className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
                           )}
                         </td>
                       </tr>
