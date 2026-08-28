@@ -5,6 +5,7 @@ import { ChevronDown, LogOut, Command, Sun, Moon } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
 import { useTheme } from "@/lib/theme-context";
 import { useCommandPalette } from "@/lib/command-palette-context";
+import { NotificationBell } from "@/components/nav/notification-bell";
 
 export function Header() {
   const { me, logout } = useAuth();
@@ -20,6 +21,7 @@ export function Header() {
       </div>
 
       <div className="flex items-center gap-3">
+        <NotificationBell />
         <button
           onClick={toggleTheme}
           className="flex h-7 w-7 items-center justify-center rounded border border-graphite-200 text-graphite-600 hover:bg-graphite-50 dark:border-graphite-700 dark:text-graphite-400 dark:hover:bg-graphite-800"
