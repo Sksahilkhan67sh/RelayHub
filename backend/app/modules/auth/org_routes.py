@@ -8,10 +8,11 @@ from app.db.session import get_db
 from app.modules.admin import service as admin_service
 from app.modules.admin.schemas import AbuseReportOut
 from app.modules.auth import invitation_service, org_service
-from app.modules.auth.dependencies import AuthContext, require_role
+from app.modules.auth.dependencies import AuthContext, get_current_auth, require_role
 from app.modules.auth.invitation_schemas import CreateInvitationRequest, InvitationOut
 from app.modules.auth.models import Role
 from app.modules.auth.org_schemas import (
+    CreateOrgAbuseReportRequest,
     InviteMemberRequest,
     MemberOut,
     UpdateMemberRoleRequest,
@@ -68,6 +69,24 @@ async def update_organization(
     return await org_service.update_organization(db, organization_id=auth.organization_id, name=payload.name)
 
 
+@router.post("/abuse-reports", response_model=AbuseReportOut, status_code=status.HTTP_201_CREATED)
+async def create_org_abuse_report(
+    payload: CreateOrgAbuseReportRequest,
+    auth: AuthContext = Depends(get_current_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Self-service: any authenticated member (no elevated role required -- filing
+    a report shouldn't need admin rights, only *seeing* the queue does, see
+    list_org_abuse_reports below) can report something about their own org for
+    platform review. Lands in the same table platform admins already review at
+    /admin/abuse-reports.
+    """
+    return await admin_service.create_org_self_report(
+        db, organization_id=auth.organization_id, reason=payload.reason, reported_by_user_id=auth.user_id
+    )
+
+
 @router.get("/abuse-reports", response_model=list[AbuseReportOut])
 async def list_org_abuse_reports(
     auth: AuthContext = Depends(require_role(Role.ADMIN)), db: AsyncSession = Depends(get_db)
@@ -78,7 +97,8 @@ async def list_org_abuse_reports(
     platform admin). Members are notified by title/body when a report is
     created or resolved (see notify_org_admins in admin/service.py) but had no
     page to actually read the report until now. Restricted to ADMIN/OWNER,
-    matching who notify_org_admins fans the notification out to.
+    matching who notify_org_admins fans the notification out to -- unlike the
+    POST above, which any member can call.
     """
     return await admin_service.list_abuse_reports_for_org(db, organization_id=auth.organization_id)
 
