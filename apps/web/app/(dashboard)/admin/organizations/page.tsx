@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Building2, Ban, Play, LogIn } from "lucide-react";
+import { Building2, Ban, Play, LogIn, AlertTriangle } from "lucide-react";
 import { api, ApiError } from "@/lib/api-client";
 import type { AdminOrganizationOut } from "@/lib/types";
 import { Card, Badge } from "@/components/ui/card";
@@ -16,6 +16,7 @@ export default function AdminOrganizationsPage() {
   const [orgs, setOrgs] = useState<AdminOrganizationOut[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [suspendTarget, setSuspendTarget] = useState<AdminOrganizationOut | null>(null);
+  const [reportTarget, setReportTarget] = useState<AdminOrganizationOut | null>(null);
   const [impersonateResult, setImpersonateResult] = useState<{ email: string; token: string } | null>(null);
 
   async function load() {
@@ -98,6 +99,9 @@ export default function AdminOrganizationsPage() {
                       <button onClick={() => handleImpersonate(org)} className="rounded p-1.5 text-graphite-500 hover:bg-graphite-100 dark:hover:bg-graphite-800" title="Impersonate owner">
                         <LogIn className="h-3.5 w-3.5" />
                       </button>
+                      <button onClick={() => setReportTarget(org)} className="rounded p-1.5 text-graphite-500 hover:bg-signal-amber-soft hover:text-signal-amber" title="File abuse report">
+                        <AlertTriangle className="h-3.5 w-3.5" />
+                      </button>
                       {org.is_suspended ? (
                         <button onClick={() => handleUnsuspend(org.id)} className="rounded p-1.5 text-graphite-500 hover:bg-signal-green-soft hover:text-signal-green" title="Unsuspend">
                           <Play className="h-3.5 w-3.5" />
@@ -117,6 +121,7 @@ export default function AdminOrganizationsPage() {
       </Card>
 
       <SuspendModal org={suspendTarget} onClose={() => setSuspendTarget(null)} onSuspended={() => { setSuspendTarget(null); load(); }} />
+      <ReportModal org={reportTarget} onClose={() => setReportTarget(null)} onReported={() => setReportTarget(null)} />
       <ImpersonateResultModal result={impersonateResult} onClose={() => setImpersonateResult(null)} />
     </div>
   );
@@ -154,6 +159,45 @@ function SuspendModal({ org, onClose, onSuspended }: { org: AdminOrganizationOut
           </Button>
           <Button type="submit" variant="danger" size="sm" loading={loading}>
             Suspend
+          </Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function ReportModal({ org, onClose, onReported }: { org: AdminOrganizationOut | null; onClose: () => void; onReported: () => void }) {
+  const [reason, setReason] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!org) return;
+    setLoading(true);
+    setError(null);
+    try {
+      await api.post("/v1/admin/abuse-reports", { organization_id: org.id, reason });
+      setReason("");
+      onReported();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to file report");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <Modal open={!!org} onClose={onClose} title={`File abuse report — ${org?.name ?? ""}`}>
+      <form onSubmit={handleSubmit} className="flex flex-col gap-3">
+        <Input label="Reason" required value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. excessive rate limit violations" />
+        {error && <p className="text-xs text-signal-red">{error}</p>}
+        <div className="mt-1 flex justify-end gap-2">
+          <Button type="button" variant="secondary" size="sm" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" variant="danger" size="sm" loading={loading}>
+            File report
           </Button>
         </div>
       </form>
