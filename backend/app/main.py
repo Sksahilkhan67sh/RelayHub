@@ -33,6 +33,7 @@ from app.modules.insights.copilot.routes import router as insights_copilot_route
 from app.modules.insights.routes import router as insights_intelligence_router
 from app.modules.logs.routes import router as logs_router
 from app.modules.newsletter.routes import router as newsletter_router
+from app.modules.notifications.routes import router as notifications_router
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -104,6 +105,7 @@ app.include_router(insights_intelligence_router, prefix=settings.API_V1_PREFIX)
 # (see insights/copilot/routes.py's module docstring).
 app.include_router(insights_copilot_router, prefix=settings.API_V1_PREFIX)
 app.include_router(alerts_router, prefix=settings.API_V1_PREFIX)
+app.include_router(notifications_router, prefix=settings.API_V1_PREFIX)
 app.include_router(billing_router, prefix=settings.API_V1_PREFIX)
 app.include_router(admin_router, prefix=settings.API_V1_PREFIX)
 app.include_router(content_admin_router, prefix=settings.API_V1_PREFIX)
