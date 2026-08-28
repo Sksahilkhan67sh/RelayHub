@@ -73,6 +73,7 @@ export default function AbuseReportsPage() {
             <thead>
               <tr className="border-b border-graphite-100 text-graphite-500 dark:border-graphite-800">
                 <th className="px-4 py-2 font-medium">Reason</th>
+                <th className="px-4 py-2 font-medium">Reported by</th>
                 <th className="px-4 py-2 font-medium">Status</th>
                 <th className="px-4 py-2 font-medium">Reported</th>
                 <th className="px-4 py-2 font-medium"></th>
@@ -82,6 +83,13 @@ export default function AbuseReportsPage() {
               {reports.map((r) => (
                 <tr key={r.id} className="border-b border-graphite-50 last:border-0 dark:border-graphite-800/60">
                   <td className="max-w-[320px] px-4 py-2.5 text-graphite-950 dark:text-graphite-50">{r.reason}</td>
+                  <td className="px-4 py-2.5 text-graphite-600 dark:text-graphite-400">
+                    {r.reported_by_user_id ? (
+                      <span className="font-mono text-[11px]">{r.reported_by_user_id.slice(0, 8)}</span>
+                    ) : (
+                      <span className="text-graphite-400">—</span>
+                    )}
+                  </td>
                   <td className="px-4 py-2.5">
                     <Badge tone={r.status === "open" ? "red" : r.status === "investigating" ? "amber" : "neutral"}>{r.status}</Badge>
                   </td>
