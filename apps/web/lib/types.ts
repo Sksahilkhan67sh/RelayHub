@@ -411,6 +411,21 @@ export interface AbuseReportOut {
   resolved_at: string | null;
 }
 
+export interface NotificationOut {
+  id: string;
+  type: string;
+  title: string;
+  body: string;
+  resource_type: string | null;
+  resource_id: string | null;
+  read_at: string | null;
+  created_at: string;
+}
+
+export interface UnreadCountOut {
+  unread_count: number;
+}
+
 export interface AdminLogEntry {
   id: string;
   organization_id: string;
