@@ -21,6 +21,7 @@ from app.modules.auth.models import Membership, Organization, Role, User
 from app.modules.billing.models import Plan, Subscription, SubscriptionStatus
 from app.modules.delivery.models import DeliveryJob, DeliveryJobStatus
 from app.modules.endpoints.models import Endpoint
+from app.modules.notifications import service as notifications_service
 
 logger = logging.getLogger(__name__)
 
@@ -536,6 +537,12 @@ async def is_feature_enabled(db: AsyncSession, *, key: str, organization_id: uui
 async def create_abuse_report(db: AsyncSession, *, organization_id: uuid.UUID, reason: str, reported_by_user_id: uuid.UUID | None) -> AbuseReport:
     report = AbuseReport(organization_id=organization_id, reason=reason, reported_by_user_id=reported_by_user_id)
     db.add(report)
+    await notifications_service.notify_org_admins(
+        db, organization_id=organization_id,
+        type="abuse_report.created", title="Your organization was flagged for review",
+        body=f"A report was filed against your organization: {reason}",
+        resource_type="abuse_report", resource_id=str(report.id),
+    )
     await db.commit()
     await db.refresh(report)
     return report
@@ -583,6 +590,12 @@ async def resolve_abuse_report(
     await audit_service.record(
         db, organization_id=report.organization_id, actor_user_id=actor_user_id, action=AuditAction.ADMIN_ABUSE_REPORT_RESOLVED,
         resource_type="abuse_report", resource_id=str(report.id), metadata={"status": new_status}, ip_address=ip_address,
+    )
+    await notifications_service.notify_org_admins(
+        db, organization_id=report.organization_id,
+        type="abuse_report.status_changed", title="Abuse report update",
+        body=f"The report filed against your organization is now {new_status}.",
+        resource_type="abuse_report", resource_id=str(report.id),
     )
     await db.commit()
     await db.refresh(report)
