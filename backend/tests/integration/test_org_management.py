@@ -1,6 +1,6 @@
 import pytest
 
-from tests.conftest import register_and_get_token
+from tests.conftest import make_platform_admin, register_and_get_token
 
 
 @pytest.mark.asyncio
@@ -168,3 +168,61 @@ async def test_audit_logs_are_org_scoped(client, unique_email):
 
     org_b_logs = await client.get("/v1/audit-logs", headers={"Authorization": f"Bearer {token_b}"})
     assert org_b_logs.json() == []
+
+
+@pytest.mark.asyncio
+async def test_org_abuse_reports_visible_to_org_owner(client, unique_email, db_session):
+    owner_token = await register_and_get_token(client, unique_email)
+    me_resp = await client.get("/v1/auth/me", headers={"Authorization": f"Bearer {owner_token}"})
+    org_id = me_resp.json()["organization"]["id"]
+
+    admin_token = await register_and_get_token(client, f"platform-{unique_email}")
+    await make_platform_admin(client, db_session, admin_token)
+    create_resp = await client.post(
+        "/v1/admin/abuse-reports", json={"organization_id": org_id, "reason": "excessive rate limit violations"},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert create_resp.status_code == 200
+
+    list_resp = await client.get("/v1/org/abuse-reports", headers={"Authorization": f"Bearer {owner_token}"})
+    assert list_resp.status_code == 200
+    assert len(list_resp.json()) == 1
+    assert list_resp.json()[0]["reason"] == "excessive rate limit violations"
+    assert list_resp.json()[0]["status"] == "open"
+
+
+@pytest.mark.asyncio
+async def test_org_abuse_reports_require_admin_role(client, unique_email):
+    owner_token = await register_and_get_token(client, unique_email)
+    member_email = f"member-{unique_email}"
+    await client.post(
+        "/v1/org/invitations", json={"email": member_email, "role": "member"}, headers={"Authorization": f"Bearer {owner_token}"}
+    )
+    raw_token = client.fake_notifications.sent[0]["message"].split("token=")[1].split()[0].strip()
+    accept_resp = await client.post(
+        "/v1/invitations/accept", json={"token": raw_token, "full_name": "Org Member", "password": "StrongPass1"}
+    )
+    member_token = accept_resp.json()["access_token"]
+
+    resp = await client.get("/v1/org/abuse-reports", headers={"Authorization": f"Bearer {member_token}"})
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_org_abuse_reports_are_org_scoped(client, unique_email, db_session):
+    """A report filed against org A must never show up in org B's listing."""
+    token_a = await register_and_get_token(client, unique_email)
+    token_b = await register_and_get_token(client, f"scope-{unique_email}")
+
+    me_resp = await client.get("/v1/auth/me", headers={"Authorization": f"Bearer {token_a}"})
+    org_a_id = me_resp.json()["organization"]["id"]
+
+    admin_token = await register_and_get_token(client, f"platform-{unique_email}")
+    await make_platform_admin(client, db_session, admin_token)
+    await client.post(
+        "/v1/admin/abuse-reports", json={"organization_id": org_a_id, "reason": "spam"},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+
+    org_b_reports = await client.get("/v1/org/abuse-reports", headers={"Authorization": f"Bearer {token_b}"})
+    assert org_b_reports.json() == []
