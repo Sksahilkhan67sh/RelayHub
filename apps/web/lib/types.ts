@@ -407,6 +407,7 @@ export interface AbuseReportOut {
   reason: string;
   status: string;
   resolution_notes: string | null;
+  reported_by_user_id: string | null;
   created_at: string;
   resolved_at: string | null;
 }
