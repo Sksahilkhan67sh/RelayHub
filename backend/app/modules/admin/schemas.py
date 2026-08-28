@@ -127,6 +127,7 @@ class AbuseReportOut(BaseModel):
     reason: str
     status: str
     resolution_notes: str | None
+    reported_by_user_id: uuid.UUID | None
     created_at: datetime
     resolved_at: datetime | None
 
