@@ -1,6 +1,6 @@
 {
   "name": "relayhub-sdk",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Official Node.js / TypeScript SDK for the RelayHub webhook and event delivery API.",
   "license": "MIT",
   "type": "module",
@@ -12,7 +12,9 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "engines": {
     "node": ">=18"
   },
@@ -26,5 +28,10 @@
     "typescript": "^5.5.3",
     "@types/node": "^20.14.10"
   },
-  "keywords": ["relayhub", "webhooks", "sdk", "api-client"]
+  "keywords": [
+    "relayhub",
+    "webhooks",
+    "sdk",
+    "api-client"
+  ]
 }
