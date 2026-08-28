@@ -27,6 +27,7 @@ class AuditAction(str, Enum):
     INVITATION_CREATED = "invitation.created"
     INVITATION_ACCEPTED = "invitation.accepted"
     INVITATION_REVOKED = "invitation.revoked"
+    INVITATION_RESENT = "invitation.resent"
     # Dead Letter Queue
     DLQ_JOB_RETRIED = "dlq.job_retried"
     DLQ_JOB_DELETED = "dlq.job_deleted"
