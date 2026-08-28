@@ -293,3 +293,93 @@ async def test_invitation_lifecycle_is_audited(client, unique_email, db_session)
     actions = (await db_session.execute(select(AuditLog.action))).scalars().all()
     assert "invitation.created" in actions
     assert "invitation.accepted" in actions
+
+
+@pytest.mark.asyncio
+async def test_resend_invitation_reissues_token_and_resends_email(client, unique_email):
+    owner_token = await register_and_get_token(client, unique_email)
+    invitee_email = f"resend-{unique_email}"
+
+    create_resp = await client.post(
+        "/v1/org/invitations", json={"email": invitee_email, "role": "member"},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    invitation_id = create_resp.json()["id"]
+    first_token = _extract_invite_token(client.fake_notifications.sent[0]["message"])
+
+    resend_resp = await client.post(
+        f"/v1/org/invitations/{invitation_id}/resend", headers={"Authorization": f"Bearer {owner_token}"}
+    )
+    assert resend_resp.status_code == 200, resend_resp.text
+    assert resend_resp.json()["status"] == "pending"
+
+    assert len(client.fake_notifications.sent) == 2
+    second_token = _extract_invite_token(client.fake_notifications.sent[1]["message"])
+    assert second_token != first_token
+
+    # The old token must no longer work -- resend reissues, it doesn't add a second valid token.
+    stale_lookup = await client.get(f"/v1/invitations/{first_token}")
+    assert stale_lookup.status_code == 404
+
+    fresh_lookup = await client.get(f"/v1/invitations/{second_token}")
+    assert fresh_lookup.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_resend_invitation_requires_admin(client, unique_email):
+    owner_token = await register_and_get_token(client, unique_email)
+    invitee_email = f"resend-noadmin-{unique_email}"
+    create_resp = await client.post(
+        "/v1/org/invitations", json={"email": invitee_email, "role": "member"},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    invitation_id = create_resp.json()["id"]
+
+    resp = await client.post(f"/v1/org/invitations/{invitation_id}/resend")
+    assert resp.status_code in (401, 403)
+
+
+@pytest.mark.asyncio
+async def test_resend_already_accepted_invitation_returns_409(client, unique_email):
+    owner_token = await register_and_get_token(client, unique_email)
+    invitee_email = f"resend-accepted-{unique_email}"
+    create_resp = await client.post(
+        "/v1/org/invitations", json={"email": invitee_email, "role": "member"},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    invitation_id = create_resp.json()["id"]
+    token = _extract_invite_token(client.fake_notifications.sent[0]["message"])
+
+    await client.post(
+        "/v1/invitations/accept",
+        json={"token": token, "password": "StrongPass1", "full_name": "New Member"},
+    )
+
+    resp = await client.post(
+        f"/v1/org/invitations/{invitation_id}/resend", headers={"Authorization": f"Bearer {owner_token}"}
+    )
+    assert resp.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_accepting_invitation_notifies_new_member_and_admins(client, unique_email):
+    owner_token = await register_and_get_token(client, unique_email)
+    invitee_email = f"notify-{unique_email}"
+    await client.post(
+        "/v1/org/invitations", json={"email": invitee_email, "role": "member"},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    token = _extract_invite_token(client.fake_notifications.sent[0]["message"])
+
+    accept_resp = await client.post(
+        "/v1/invitations/accept",
+        json={"token": token, "password": "StrongPass1", "full_name": "New Member"},
+    )
+    assert accept_resp.status_code == 200
+    new_member_token = accept_resp.json()["access_token"]
+
+    new_member_notifs = await client.get("/v1/notifications", headers={"Authorization": f"Bearer {new_member_token}"})
+    assert any(n["type"] == "member.joined" for n in new_member_notifs.json())
+
+    owner_notifs = await client.get("/v1/notifications", headers={"Authorization": f"Bearer {owner_token}"})
+    assert any(n["type"] == "member.joined" for n in owner_notifs.json())
