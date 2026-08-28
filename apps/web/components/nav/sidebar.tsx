@@ -57,6 +57,7 @@ export const SETTINGS_ITEMS = [
   { href: "/settings/team", label: "Team", icon: Users },
   { href: "/settings/organization", label: "Organization", icon: Settings },
   { href: "/settings/audit-logs", label: "Audit Logs", icon: ShieldCheck },
+  { href: "/settings/abuse-reports", label: "Abuse Reports", icon: AlertTriangle },
 ] as const;
 
 export const ADMIN_ITEMS = [
