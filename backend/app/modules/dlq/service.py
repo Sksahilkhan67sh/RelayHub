@@ -12,9 +12,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.common.queue_client import QueueClient
+from app.common.realtime_publisher import RealtimePublisher
 from app.modules.audit import service as audit_service
 from app.modules.audit.models import AuditAction
 from app.modules.delivery.models import DeliveryJob, DeliveryJobStatus
+from app.modules.realtime.events import emit_delivery_update
 
 logger = logging.getLogger(__name__)
 
@@ -74,8 +76,10 @@ async def retry_dead_letter_job(
     actor_user_id: uuid.UUID,
     queue_client: QueueClient,
     ip_address: str | None,
+    realtime_publisher: RealtimePublisher | None = None,
 ) -> DeliveryJob:
     job = await _get_dlq_job_or_404(db, organization_id=organization_id, job_id=job_id)
+    max_attempts = job.endpoint.max_retry_attempts if job.endpoint else None
 
     # A manual retry from the DLQ is a deliberate customer decision to give this
     # delivery a fresh chance -- reset the attempt counter so it gets the FULL retry
@@ -98,6 +102,22 @@ async def retry_dead_letter_job(
     )
     await db.commit()
     await db.refresh(job, attribute_names=["attempts"])
+
+    # Realtime "queued" notification -- strictly after the commit above.
+    # Failure-isolated inside emit_delivery_update: never turns an already-durable
+    # DLQ replay into a failed request.
+    if realtime_publisher is not None:
+        await emit_delivery_update(
+            realtime_publisher,
+            organization_id=organization_id,
+            delivery_job_id=job.id,
+            event_id=job.event_id,
+            endpoint_id=job.endpoint_id,
+            status=DeliveryJobStatus.QUEUED.value,
+            attempt_number=job.attempt_number,
+            queued_at=job.queued_at,
+            max_attempts=max_attempts,
+        )
 
     # The status flip to `queued` above is already durably committed -- a broker
     # failure here must not surface as a failed retry request (the retry DID
@@ -143,14 +163,18 @@ async def bulk_retry_dead_letter_jobs(
     actor_user_id: uuid.UUID,
     queue_client: QueueClient,
     ip_address: str | None,
+    realtime_publisher: RealtimePublisher | None = None,
 ) -> tuple[list[uuid.UUID], list[uuid.UUID]]:
     retried: list[uuid.UUID] = []
     skipped: list[uuid.UUID] = []
+    retried_jobs: list[DeliveryJob] = []
 
     for job_id in job_ids:
         job = (
             await db.execute(
-                select(DeliveryJob).where(
+                select(DeliveryJob)
+                .options(selectinload(DeliveryJob.endpoint))
+                .where(
                     DeliveryJob.id == job_id,
                     DeliveryJob.organization_id == organization_id,
                     DeliveryJob.status == DeliveryJobStatus.DEAD_LETTER.value,
@@ -168,6 +192,7 @@ async def bulk_retry_dead_letter_jobs(
         job.completed_at = None
         job.queued_at = datetime.now(timezone.utc)
         retried.append(job_id)
+        retried_jobs.append(job)
 
     await audit_service.record(
         db,
@@ -180,6 +205,22 @@ async def bulk_retry_dead_letter_jobs(
         ip_address=ip_address,
     )
     await db.commit()
+
+    # Realtime "queued" notifications -- strictly after the commit above, one per
+    # replayed job. Failure-isolated inside emit_delivery_update.
+    if realtime_publisher is not None:
+        for job in retried_jobs:
+            await emit_delivery_update(
+                realtime_publisher,
+                organization_id=organization_id,
+                delivery_job_id=job.id,
+                event_id=job.event_id,
+                endpoint_id=job.endpoint_id,
+                status=DeliveryJobStatus.QUEUED.value,
+                attempt_number=job.attempt_number,
+                queued_at=job.queued_at,
+                max_attempts=job.endpoint.max_retry_attempts if job.endpoint else None,
+            )
 
     for job_id in retried:
         try:
