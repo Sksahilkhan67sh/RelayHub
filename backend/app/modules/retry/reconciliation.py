@@ -67,8 +67,10 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.queue_client import QueueClient
+from app.common.realtime_publisher import RealtimePublisher
 from app.modules.admin.models import WorkerHeartbeat
 from app.modules.delivery.models import DeliveryJob, DeliveryJobStatus
+from app.modules.realtime.events import emit_delivery_update
 
 logger = logging.getLogger(__name__)
 
@@ -199,6 +201,7 @@ async def reconcile_stuck_jobs(
     now: datetime | None = None,
     stuck_processing_after: timedelta = STUCK_PROCESSING_AFTER,
     stale_dispatch_after: timedelta = STALE_DISPATCH_AFTER,
+    realtime_publisher: RealtimePublisher | None = None,
 ) -> ReconciliationResult:
     now = now or datetime.now(timezone.utc)
     result = ReconciliationResult()
@@ -270,6 +273,34 @@ async def reconcile_stuck_jobs(
     result.requeued_missed_retries = list(missed_retry_ids)
 
     await db.commit()
+
+    # Realtime "retrying" notifications for jobs recovered from stuck `processing`
+    # -- strictly after the commit above. These rows don't have their endpoint
+    # loaded here (a bulk UPDATE, not a per-row fetch, by design -- see the module
+    # docstring on why this stays a single statement), so max_attempts is omitted
+    # rather than issuing an extra query per recovered job just for a display
+    # nicety the frontend already has cached from its last REST fetch (same
+    # reasoning as this module's own dataclass docstring on emit_delivery_update).
+    if realtime_publisher is not None and result.recovered_stuck_processing:
+        recovered_rows = (
+            await db.execute(
+                select(DeliveryJob.id, DeliveryJob.organization_id, DeliveryJob.event_id, DeliveryJob.endpoint_id,
+                       DeliveryJob.attempt_number, DeliveryJob.queued_at, DeliveryJob.next_attempt_at)
+                .where(DeliveryJob.id.in_(result.recovered_stuck_processing))
+            )
+        ).all()
+        for row in recovered_rows:
+            await emit_delivery_update(
+                realtime_publisher,
+                organization_id=row.organization_id,
+                delivery_job_id=row.id,
+                event_id=row.event_id,
+                endpoint_id=row.endpoint_id,
+                status=DeliveryJobStatus.RETRYING.value,
+                attempt_number=row.attempt_number,
+                queued_at=row.queued_at,
+                next_attempt_at=row.next_attempt_at,
+            )
 
     for job_id in (*result.recovered_stuck_processing, *result.requeued_stale_queued, *result.requeued_missed_retries):
         await queue_client.enqueue(job_id)
