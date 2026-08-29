@@ -39,7 +39,7 @@ same default `prometheus_client` registry, deliberately for different reasons.
 
 from __future__ import annotations
 
-from prometheus_client import Gauge
+from prometheus_client import Counter, Gauge
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.admin import service as admin_service
@@ -99,6 +99,31 @@ INSIGHTS_RCA_GENERATED_LAST_HOUR = Gauge(
 # cluster-wide total unless scraped per-worker or pushed through a gateway -- an
 # accepted, documented tradeoff for this pass (see that module for the counters
 # themselves), not an oversight.
+
+# --- Realtime delivery status transport (this phase) ---
+# Same in-process-Counter tradeoff as the AI call metrics immediately above, for
+# the same reason: `realtime_events_published_total` is incremented from wherever
+# `emit_delivery_update` is called, which includes the Celery worker process
+# (executor.py, reconciliation.py) as well as the API process (events/service.py,
+# dlq/service.py) -- only the API process's own counter value is visible to a
+# scrape of `/metrics`, since worker processes serve no HTTP endpoint of their
+# own. `realtime_connections` (open SSE streams) and
+# `realtime_publish_failures_total`, by contrast, are meaningful precisely because
+# they're scoped to the API process: SSE connections are only ever held by the API
+# process, and a publish failure there is the one that matters for "is a connected
+# browser about to miss an update" alerting. Documented tradeoff, not an oversight.
+REALTIME_CONNECTIONS = Gauge("relayhub_realtime_connections", "Currently open SSE delivery-status streams")
+realtime_events_published_total = Counter(
+    "relayhub_realtime_events_published_total",
+    "Realtime delivery.updated notifications published",
+    labelnames=["status"],
+)
+realtime_publish_failures_total = Counter(
+    "relayhub_realtime_publish_failures_total", "Realtime publish attempts that failed (delivery itself is unaffected)"
+)
+realtime_reconnects_total = Counter(
+    "relayhub_realtime_reconnects_total", "SSE stream connections established (includes client reconnects)"
+)
 
 
 _QUEUE_DEPTH_STATUSES = (
