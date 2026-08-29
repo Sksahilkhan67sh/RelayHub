@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, CheckCircle2, XCircle, Loader2, Circle } from "lucide-react";
 import { api, ApiError } from "@/lib/api-client";
@@ -9,13 +9,16 @@ import { Card, CardHeader, CardBody, Badge } from "@/components/ui/card";
 import { StatusDot, statusToSignalColor } from "@/components/ui/status-dot";
 import { Skeleton } from "@/components/ui/skeleton";
 import { deriveDeliveryAttemptState, STATUS_LABELS, STATUS_COLORS, formatCountdown } from "@/lib/delivery-attempts";
+import { RealtimeIndicator } from "@/components/dashboard/realtime-indicator";
+import { useDeliveryRealtimeStream, type DeliveryRealtimeEvent } from "@/lib/realtime";
 
-// Non-terminal jobs are refetched on a modest interval so the page reflects real
-// backend state (a retry firing, a status changing) without the person needing to
-// manually refresh -- deliberately NOT an aggressive poll: 5s is frequent enough to
-// feel live on a page someone is actively watching, infrequent enough not to hammer
-// the API, and polling stops entirely the instant the job reaches a terminal state.
-const POLL_INTERVAL_MS = 5000;
+// Fallback only (spec Step 17: "if realtime connection fails, the application
+// must remain usable"). While the SSE stream is `live`, this page relies on
+// pushed `delivery.updated` events instead of polling; this interval only
+// takes over when the realtime connection is down, so a Redis/SSE outage
+// degrades to the same periodic-refetch behavior this page always had, rather
+// than going silent.
+const FALLBACK_POLL_INTERVAL_MS = 5000;
 
 export default function DeliveryDetailPage() {
   const params = useParams<{ id: string }>();
@@ -24,6 +27,7 @@ export default function DeliveryDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const loadRef = useRef<() => Promise<DeliveryJobOut | null>>();
 
   async function load() {
     try {
@@ -35,27 +39,55 @@ export default function DeliveryDetailPage() {
       return null;
     }
   }
+  loadRef.current = load;
 
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.id]);
 
-  // Poll only while the job is still in flight; stop the instant it reaches a
-  // terminal state so a finished delivery never keeps quietly refetching forever.
+  // Live status updates for exactly this job -- ignores events for any other
+  // delivery job (this stream is org-scoped, not job-scoped, so events for
+  // sibling deliveries do arrive here and are correctly dropped).
+  const handleRealtimeEvent = useCallback(
+    (event: DeliveryRealtimeEvent) => {
+      if (event.delivery_job_id !== params.id) return;
+      // A delivery.updated event doesn't carry the full DeliveryAttempt row
+      // (response headers/body, duration, worker id, destination ip) that
+      // the attempt-history timeline needs -- only the job-level fields. So a
+      // live event still triggers one authoritative refetch, but it's now
+      // event-driven (fires the instant a transition happens) rather than
+      // time-driven (fires up to 5s late).
+      loadRef.current?.();
+    },
+    [params.id]
+  );
+
+  const handleReconciliationNeeded = useCallback(() => {
+    loadRef.current?.();
+  }, []);
+
+  const realtimeState = useDeliveryRealtimeStream(handleRealtimeEvent, handleReconciliationNeeded);
+
+  // Fallback polling: only while the job is in flight AND the realtime stream
+  // is not currently live/connecting (spec Step 17 -- realtime failure must
+  // never make the page stop reflecting reality, so this is the safety net,
+  // not the primary mechanism). Stops entirely once the job reaches a
+  // terminal state, same as before this phase.
   useEffect(() => {
     if (!job) return;
     const state = deriveDeliveryAttemptState(job);
-    if (state.isTerminal) {
+    const realtimeCovering = realtimeState === "live" || realtimeState === "connecting";
+    if (state.isTerminal || realtimeCovering) {
       if (pollRef.current) clearInterval(pollRef.current);
       return;
     }
-    pollRef.current = setInterval(load, POLL_INTERVAL_MS);
+    pollRef.current = setInterval(load, FALLBACK_POLL_INTERVAL_MS);
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [job?.status, job?.attempt_number]);
+  }, [job?.status, job?.attempt_number, realtimeState]);
 
   // Local 1-second ticker purely to reformat the "in 42 seconds" countdown text
   // between backend refetches -- no network call, just re-rendering the same
@@ -88,13 +120,16 @@ export default function DeliveryDetailPage() {
 
   return (
     <div className="flex flex-col gap-4">
-      <button
-        onClick={() => router.push("/deliveries")}
-        className="flex w-fit items-center gap-1 text-xs text-graphite-600 hover:text-graphite-950 dark:text-graphite-400 dark:hover:text-graphite-50"
-      >
-        <ArrowLeft className="h-3.5 w-3.5" />
-        Back to deliveries
-      </button>
+      <div className="flex items-center justify-between">
+        <button
+          onClick={() => router.push("/deliveries")}
+          className="flex w-fit items-center gap-1 text-xs text-graphite-600 hover:text-graphite-950 dark:text-graphite-400 dark:hover:text-graphite-50"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" />
+          Back to deliveries
+        </button>
+        <RealtimeIndicator state={realtimeState} />
+      </div>
 
       <div className="flex items-center gap-2">
         <h1 className="font-mono text-sm font-semibold text-graphite-950 dark:text-graphite-50">{job.event_type}</h1>
