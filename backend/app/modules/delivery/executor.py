@@ -17,6 +17,7 @@ import httpx
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.common.realtime_publisher import RealtimePublisher
 from app.core.encryption import decrypt_secret
 from app.modules.delivery.connect_time_security import DeliveryBlockedError, resolve_and_validate
 from app.modules.delivery.models import DeliveryAttempt, DeliveryJob, DeliveryJobStatus, ErrorCategory
@@ -24,6 +25,7 @@ from app.modules.delivery.signing import sign
 from app.modules.endpoints import service as endpoint_service
 from app.modules.endpoints.models import Endpoint, EndpointSecret
 from app.modules.events.models import Event
+from app.modules.realtime.events import emit_delivery_update
 from app.modules.retry.schedule import compute_next_retry_delay
 
 MAX_RESPONSE_BODY_CAPTURE = 4096
@@ -82,6 +84,7 @@ async def execute_delivery_job(
     worker_id: str = "worker-local",
     region: str = "local",
     http_client: httpx.AsyncClient | None = None,
+    realtime_publisher: RealtimePublisher | None = None,
 ) -> DeliveryJob:
     job = await _claim_job(db, job_id, worker_id=worker_id)
 
@@ -96,6 +99,24 @@ async def execute_delivery_job(
             select(EndpointSecret).where(EndpointSecret.endpoint_id == endpoint.id, EndpointSecret.is_primary.is_(True))
         )
     ).scalar_one_or_none()
+
+    # Realtime "processing" notification -- strictly after _claim_job's own commit
+    # above (the CAS UPDATE that actually moved the row to `processing`), so the
+    # dashboard shows the transition the instant it's durable, not before.
+    # Failure-isolated inside emit_delivery_update: a publish problem here can
+    # never affect the delivery attempt this function is about to make.
+    if realtime_publisher is not None:
+        await emit_delivery_update(
+            realtime_publisher,
+            organization_id=job.organization_id,
+            delivery_job_id=job.id,
+            event_id=job.event_id,
+            endpoint_id=job.endpoint_id,
+            status=DeliveryJobStatus.PROCESSING.value,
+            attempt_number=job.attempt_number,
+            queued_at=job.queued_at,
+            max_attempts=endpoint.max_retry_attempts,
+        )
 
     started_at = datetime.now(timezone.utc)
     start_perf = time.perf_counter()
@@ -156,6 +177,28 @@ async def execute_delivery_job(
 
         await endpoint_service.record_delivery_result(db, endpoint=endpoint, success=success)
         await db.commit()
+
+        # Realtime terminal/retry-scheduled notification -- strictly after the
+        # commit immediately above, so the dashboard never shows a state the
+        # database hasn't durably persisted yet (spec Step 9). Covers success,
+        # failed, retrying (with next_attempt_at), and dead_letter -- every status
+        # this closure can set job.status to.
+        if realtime_publisher is not None:
+            await emit_delivery_update(
+                realtime_publisher,
+                organization_id=job.organization_id,
+                delivery_job_id=job.id,
+                event_id=job.event_id,
+                endpoint_id=job.endpoint_id,
+                status=job.status,
+                attempt_number=job.attempt_number,
+                queued_at=job.queued_at,
+                max_attempts=endpoint.max_retry_attempts,
+                http_status=http_status,
+                error_category=error_category if error_category != ErrorCategory.NONE.value else None,
+                next_attempt_at=job.next_attempt_at,
+                completed_at=job.completed_at,
+            )
 
         if job.status == DeliveryJobStatus.DEAD_LETTER.value:
             from app.common.notification_client import get_notification_dispatcher
