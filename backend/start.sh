@@ -14,6 +14,8 @@
 
 set -e
 
+echo "===DEBUG HOST: $(python3 -c "import re,os; print(re.search(r'@([^:/]+)', os.environ.get('DATABASE_URL','MISSING')).group(1) if os.environ.get('DATABASE_URL') else 'MISSING')")==="
+
 alembic upgrade head
 
 celery -A app.workers.celery_app worker --loglevel=info --pool=solo --concurrency=1 &
