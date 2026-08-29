@@ -34,6 +34,7 @@ from app.modules.insights.routes import router as insights_intelligence_router
 from app.modules.logs.routes import router as logs_router
 from app.modules.newsletter.routes import router as newsletter_router
 from app.modules.notifications.routes import router as notifications_router
+from app.modules.realtime.routes import router as realtime_router
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -88,6 +89,7 @@ app.include_router(api_keys_router, prefix=settings.API_V1_PREFIX)
 app.include_router(endpoints_router, prefix=settings.API_V1_PREFIX)
 app.include_router(events_router, prefix=settings.API_V1_PREFIX)
 app.include_router(deliveries_router, prefix=settings.API_V1_PREFIX)
+app.include_router(realtime_router, prefix=settings.API_V1_PREFIX)
 app.include_router(dlq_router, prefix=settings.API_V1_PREFIX)
 app.include_router(logs_router, prefix=settings.API_V1_PREFIX)
 # Mounted twice deliberately -- see app/modules/analytics/routes.py's module
