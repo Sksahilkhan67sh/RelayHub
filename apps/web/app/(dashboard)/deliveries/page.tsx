@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Send, ChevronRight, ChevronDown } from "lucide-react";
 import { api, ApiError } from "@/lib/api-client";
@@ -9,6 +9,8 @@ import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { TableSkeleton } from "@/components/ui/skeleton";
 import { StatusDot, statusToSignalColor } from "@/components/ui/status-dot";
+import { RealtimeIndicator } from "@/components/dashboard/realtime-indicator";
+import { useDeliveryRealtimeStream, type DeliveryRealtimeEvent } from "@/lib/realtime";
 
 const STATUS_FILTERS = ["queued", "processing", "success", "retrying", "failed", "dead_letter"] as const;
 const IN_FLIGHT = new Set(["queued", "processing", "retrying"]);
@@ -62,8 +64,10 @@ export default function DeliveriesPage() {
   const [grouped, setGrouped] = useState(true);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  async function load() {
-    setDeliveries(null);
+  const loadRef = useRef<(options?: { silent?: boolean }) => Promise<void>>();
+
+  async function load(options: { silent?: boolean } = {}) {
+    if (!options.silent) setDeliveries(null);
     try {
       const qs = statusFilter ? `?status=${statusFilter}&limit=50` : "?limit=50";
       const data = await api.get<DeliveryLogEntryOut[]>(`/v1/logs${qs}`);
@@ -72,11 +76,47 @@ export default function DeliveriesPage() {
       setError(err instanceof ApiError ? err.message : "Failed to load deliveries");
     }
   }
+  loadRef.current = load;
 
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statusFilter]);
+
+  // Live status updates: patch a job already visible on this page in place
+  // (matches spec Step 13 -- "no page refresh" -- for the common case of
+  // watching a delivery already in view transition state). A `delivery.updated`
+  // for a job NOT yet in the current list (a brand new event published while
+  // this page is open) instead triggers one REST refetch, since inserting it
+  // in the right grouped/sorted/filtered position correctly is exactly what
+  // the existing `/v1/logs` query already does.
+  const handleRealtimeEvent = useCallback((event: DeliveryRealtimeEvent) => {
+    setDeliveries((prev) => {
+      if (!prev) return prev;
+      const index = prev.findIndex((d) => d.id === event.delivery_job_id);
+      if (index === -1) {
+        loadRef.current?.({ silent: true });
+        return prev;
+      }
+      const existing = prev[index];
+      if (!existing) return prev;
+      const next = [...prev];
+      next[index] = {
+        ...existing,
+        status: event.status,
+        attempt_number: event.attempt_number,
+        next_attempt_at: event.next_attempt_at,
+        completed_at: event.completed_at,
+      };
+      return next;
+    });
+  }, []);
+
+  const handleReconciliationNeeded = useCallback(() => {
+    loadRef.current?.({ silent: true });
+  }, []);
+
+  const realtimeState = useDeliveryRealtimeStream(handleRealtimeEvent, handleReconciliationNeeded);
 
   function toggleExpanded(eventId: string) {
     setExpanded((prev) => {
@@ -98,14 +138,17 @@ export default function DeliveriesPage() {
             Every delivery attempt across all your endpoints.
           </p>
         </div>
-        <label className="flex shrink-0 items-center gap-2 text-xs text-graphite-600 dark:text-graphite-400">
-          <input
-            type="checkbox"
-            checked={grouped}
-            onChange={(e) => setGrouped(e.target.checked)}
-            className="h-3.5 w-3.5 accent-signal-amber"
-          />
-          Group by event
+        <label className="flex shrink-0 items-center gap-3 text-xs text-graphite-600 dark:text-graphite-400">
+          <RealtimeIndicator state={realtimeState} />
+          <span className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={grouped}
+              onChange={(e) => setGrouped(e.target.checked)}
+              className="h-3.5 w-3.5 accent-signal-amber"
+            />
+            Group by event
+          </span>
         </label>
       </div>
 
