@@ -72,6 +72,7 @@ async def client(db_session):
     from app.common.notification_client import InMemoryNotificationDispatcher, get_notification_dispatcher
     from app.common.queue_client import get_queue_client, InMemoryQueueClient
     from app.common.rate_limiter import get_rate_limiter, InMemoryRateLimiter
+    from app.common.realtime_publisher import get_realtime_publisher, InMemoryRealtimePublisher
     from app.common.stripe_client import FakeStripeClient, get_stripe_client
     from app.main import app
 
@@ -82,18 +83,21 @@ async def client(db_session):
     fake_rate_limiter = InMemoryRateLimiter()
     fake_stripe = FakeStripeClient()
     fake_notifications = InMemoryNotificationDispatcher()
+    fake_realtime = InMemoryRealtimePublisher()
 
     app.dependency_overrides[get_db] = _override_get_db
     app.dependency_overrides[get_queue_client] = lambda: fake_queue
     app.dependency_overrides[get_rate_limiter] = lambda: fake_rate_limiter
     app.dependency_overrides[get_stripe_client] = lambda: fake_stripe
     app.dependency_overrides[get_notification_dispatcher] = lambda: fake_notifications
+    app.dependency_overrides[get_realtime_publisher] = lambda: fake_realtime
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         ac.fake_queue = fake_queue  # type: ignore[attr-defined]
         ac.fake_rate_limiter = fake_rate_limiter  # type: ignore[attr-defined]
         ac.fake_stripe = fake_stripe  # type: ignore[attr-defined]
         ac.fake_notifications = fake_notifications  # type: ignore[attr-defined]
+        ac.fake_realtime = fake_realtime  # type: ignore[attr-defined]
         yield ac
     app.dependency_overrides.clear()
 
