@@ -11,10 +11,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.common.queue_client import QueueClient
+from app.common.realtime_publisher import RealtimePublisher
 from app.modules.delivery.models import DeliveryJob, DeliveryJobStatus
 from app.modules.endpoints.models import Endpoint
 from app.modules.events.models import BUILT_IN_EVENT_TYPES, Event, EventType
 from app.modules.events.schemas import PublishEventRequest
+from app.modules.realtime.events import emit_delivery_update
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +77,7 @@ async def publish_event(
     data: PublishEventRequest,
     request_id: str,
     queue_client: QueueClient,
+    realtime_publisher: RealtimePublisher | None = None,
 ) -> Event:
     # Idempotency: if the client already published this exact idempotency_key for
     # this org, return the original event unchanged rather than creating a duplicate
@@ -167,6 +170,24 @@ async def publish_event(
                 "queue dispatch failed for delivery_job=%s (event=%s) -- job remains queued in the "
                 "database and will be picked up by reconciliation",
                 job.id, event.id,
+            )
+
+    # Realtime "queued" notification -- strictly after the commit above.
+    # Failure-isolated inside emit_delivery_update: a publisher problem here can
+    # never turn an already-durably-committed publish into a failed request.
+    if realtime_publisher is not None:
+        max_attempts_by_endpoint = {ep.id: ep.max_retry_attempts for ep in matching}
+        for job in jobs:
+            await emit_delivery_update(
+                realtime_publisher,
+                organization_id=organization_id,
+                delivery_job_id=job.id,
+                event_id=event.id,
+                endpoint_id=job.endpoint_id,
+                status=DeliveryJobStatus.QUEUED.value,
+                attempt_number=job.attempt_number,
+                queued_at=job.queued_at,
+                max_attempts=max_attempts_by_endpoint.get(job.endpoint_id),
             )
 
     if jobs:
