@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.queue_client import QueueClient, get_queue_client
+from app.common.realtime_publisher import RealtimePublisher, get_realtime_publisher
 from app.db.session import get_db
 from app.modules.auth.dependencies import AuthContext, require_role
 from app.modules.auth.models import Role
@@ -78,6 +79,7 @@ async def retry_dead_letter_job(
     auth: AuthContext = Depends(require_role(Role.ADMIN)),
     db: AsyncSession = Depends(get_db),
     queue_client: QueueClient = Depends(get_queue_client),
+    realtime_publisher: RealtimePublisher = Depends(get_realtime_publisher),
 ):
     job = await service.retry_dead_letter_job(
         db,
@@ -86,6 +88,7 @@ async def retry_dead_letter_job(
         actor_user_id=auth.user_id,
         queue_client=queue_client,
         ip_address=request.client.host if request.client else None,
+        realtime_publisher=realtime_publisher,
     )
     return RetryDeadLetterResponse(id=job.id, status=job.status)
 
@@ -113,6 +116,7 @@ async def bulk_retry_dead_letter_jobs(
     auth: AuthContext = Depends(require_role(Role.ADMIN)),
     db: AsyncSession = Depends(get_db),
     queue_client: QueueClient = Depends(get_queue_client),
+    realtime_publisher: RealtimePublisher = Depends(get_realtime_publisher),
 ):
     retried, skipped = await service.bulk_retry_dead_letter_jobs(
         db,
@@ -121,5 +125,6 @@ async def bulk_retry_dead_letter_jobs(
         actor_user_id=auth.user_id,
         queue_client=queue_client,
         ip_address=request.client.host if request.client else None,
+        realtime_publisher=realtime_publisher,
     )
     return BulkRetryResponse(retried=retried, skipped=skipped)
