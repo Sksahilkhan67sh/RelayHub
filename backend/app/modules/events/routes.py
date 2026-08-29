@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.queue_client import QueueClient, get_queue_client
+from app.common.realtime_publisher import RealtimePublisher, get_realtime_publisher
 from app.db.session import get_db
 from app.modules.api_keys.dependencies import enforce_api_key_rate_limit, require_scope
 from app.modules.api_keys.models import ApiKey, ApiKeyScope
@@ -26,6 +27,7 @@ async def publish_event(
     _rate_limit_check: ApiKey = Depends(enforce_api_key_rate_limit),
     db: AsyncSession = Depends(get_db),
     queue_client: QueueClient = Depends(get_queue_client),
+    realtime_publisher: RealtimePublisher = Depends(get_realtime_publisher),
 ):
     request_id = getattr(request.state, "request_id", str(uuid.uuid4()))
     event = await service.publish_event(
@@ -35,6 +37,7 @@ async def publish_event(
         data=payload,
         request_id=request_id,
         queue_client=queue_client,
+        realtime_publisher=realtime_publisher,
     )
     return event
 
