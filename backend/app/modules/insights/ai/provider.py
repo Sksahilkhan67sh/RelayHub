@@ -1,16 +1,24 @@
 """
-Phase 3 -- AI provider abstraction (section 8). Same shape as every other external
-dependency in this codebase (stripe_client, notification_client, queue_client): a
-Protocol, a real implementation, and an injectable fake for tests. RelayHub is
-never tightly coupled to one AI vendor -- provider/model/timeout/token-limit/
-enable-flag are all config (see Settings.AI_PROVIDER_*), and swapping providers
-means writing one new class here, not touching insight_tasks.py or rca.py.
+Phase 3 -- AI provider abstraction (section 8). Originally a single Anthropic-only
+Protocol/implementation; as of the Universal AI Provider & Model Compatibility
+phase, this module is a thin backward-compatible SHIM over
+`app.modules.ai_gateway`, which is now the real provider-agnostic implementation
+(supports anthropic/openai/gemini/xai, normalized errors, capability validation,
+optional fallback -- see backend/app/modules/ai_gateway/ and docs/ai/providers.md).
 
-This module does NOT decide *whether* to call the AI (that's service.py's job,
-gated on "incident candidate", never on raw events) and does NOT trust raw text
-back from the provider (that's ai/schemas.py's job). This module's only
-responsibility is "given a prompt, return raw text from the configured provider,
-or raise on failure/timeout" -- deliberately thin.
+Every public name below (`AIProvider`, `AICompletionRequest`, `AIProviderError`,
+`AIProviderTimeoutError`, `AIProviderRateLimitError`, `AnthropicAIProvider`,
+`FakeAIProvider`, `get_ai_provider`) keeps its exact pre-existing signature and
+behavior on purpose: insight_tasks.py, insights/ai/service.py,
+insights/copilot/service.py, insights/copilot/routes.py, and every existing
+test file import and use these names unchanged (see
+PHASE_UNIVERSAL_AI_AUDIT.md section 7, "Backward compatibility plan"). Nothing
+in this module talks to a provider's HTTP API directly anymore -- that logic
+lives in `ai_gateway/adapters/`.
+
+This module still does NOT decide *whether* to call the AI (service.py's job)
+and does NOT trust raw text back from the provider (ai/schemas.py's job) --
+same division of responsibility as before.
 """
 
 from __future__ import annotations
@@ -21,11 +29,32 @@ from functools import lru_cache
 from typing import Protocol
 
 from app.core.config import settings
+from app.modules.ai_gateway.contracts import (
+    AIAuthenticationError,
+    AICapabilityError,
+    AIContextLimitError,
+    AIGatewayError,
+    AIGatewayRequest,
+    AIUnknownProviderError,
+)
+from app.modules.ai_gateway.contracts import AIInvalidRequestError as _AIInvalidRequestError
+from app.modules.ai_gateway.contracts import AIMalformedResponseError as _AIMalformedResponseError
+from app.modules.ai_gateway.contracts import AIRateLimitError as _AIRateLimitError
+from app.modules.ai_gateway.contracts import AITimeoutError as _AITimeoutError
+from app.modules.ai_gateway.contracts import AIUnavailableError as _AIUnavailableError
+from app.modules.ai_gateway.gateway import get_gateway
 
 
 class AIProviderError(Exception):
     """Raised for any provider-side failure: network error, timeout, rate limit,
-    non-2xx response, or missing configuration. Always caught by service.py."""
+    non-2xx response, or missing configuration. Always caught by service.py.
+
+    This is the same broad exception every existing caller already catches.
+    Every ai_gateway error (auth, rate limit, timeout, unavailable, invalid
+    request, context limit, malformed response, unknown provider, capability
+    mismatch) is re-raised as this type (or the two more specific subclasses
+    below, which are themselves subclasses of this one) so no existing
+    `except AIProviderError` call site needs to change."""
 
 
 class AIProviderTimeoutError(AIProviderError):
@@ -51,58 +80,52 @@ class AIProvider(Protocol):
         ...
 
 
-class AnthropicAIProvider:
-    """Real provider implementation. Uses the Anthropic Messages API directly
-    (httpx) rather than the SDK, matching this codebase's existing preference for
-    thin direct HTTP calls in external-service clients (see delivery/executor.py)."""
+def _translate_gateway_error(exc: AIGatewayError) -> AIProviderError:
+    if isinstance(exc, _AITimeoutError):
+        return AIProviderTimeoutError(str(exc))
+    if isinstance(exc, _AIRateLimitError):
+        return AIProviderRateLimitError(str(exc))
+    if isinstance(exc, (AIAuthenticationError, _AIInvalidRequestError, _AIUnavailableError,
+                         _AIMalformedResponseError, AIContextLimitError, AICapabilityError, AIUnknownProviderError)):
+        return AIProviderError(str(exc))
+    return AIProviderError(str(exc))
 
-    _API_URL = "https://api.anthropic.com/v1/messages"
-    _API_VERSION = "2023-06-01"
 
-    def __init__(self, *, api_key: str, model: str) -> None:
-        if not api_key:
-            raise AIProviderError("AI_PROVIDER_API_KEY is not configured")
-        self._api_key = api_key
-        self._model = model
+class _GatewayBackedProvider:
+    """Adapts the gateway's `complete(AIGatewayRequest) -> AIGatewayResponse`
+    onto this module's pre-existing narrow `complete(AICompletionRequest) -> str`
+    Protocol, which is all insights/ai/service.py and insights/copilot/service.py
+    have ever needed."""
+
+    def __init__(self) -> None:
+        self._gateway = get_gateway()
 
     async def complete(self, request: AICompletionRequest) -> str:
-        import httpx
-
-        headers = {
-            "x-api-key": self._api_key,
-            "anthropic-version": self._API_VERSION,
-            "content-type": "application/json",
-        }
-        body = {
-            "model": self._model,
-            "max_tokens": request.max_tokens,
-            "system": request.system_prompt,
-            "messages": [{"role": "user", "content": request.user_prompt}],
-        }
-
+        gateway_request = AIGatewayRequest(
+            system_prompt=request.system_prompt,
+            messages=[("user", request.user_prompt)],
+            max_tokens=request.max_tokens,
+            timeout_seconds=request.timeout_seconds,
+            structured_output=True,  # both existing callers require valid-JSON output
+        )
         try:
-            async with httpx.AsyncClient(timeout=request.timeout_seconds) as client:
-                response = await client.post(self._API_URL, headers=headers, json=body)
-        except httpx.TimeoutException as exc:
-            raise AIProviderTimeoutError(f"AI provider request timed out after {request.timeout_seconds}s") from exc
-        except httpx.HTTPError as exc:
-            raise AIProviderError(f"AI provider request failed: {exc}") from exc
+            response = await self._gateway.complete(gateway_request)
+        except AIGatewayError as exc:
+            raise _translate_gateway_error(exc) from exc
+        return response.text
 
-        if response.status_code == 429:
-            raise AIProviderRateLimitError("AI provider rate limit exceeded")
-        if response.status_code >= 400:
-            raise AIProviderError(f"AI provider returned HTTP {response.status_code}: {response.text[:500]}")
 
-        data = response.json()
-        try:
-            blocks = data["content"]
-            text = "".join(block["text"] for block in blocks if block.get("type") == "text")
-        except (KeyError, TypeError) as exc:
-            raise AIProviderError(f"Unexpected AI provider response shape: {exc}") from exc
-
-        if not text:
-            raise AIProviderError("AI provider returned no text content")
-        return text
+def AnthropicAIProvider(*, api_key: str, model: str) -> _GatewayBackedProvider:  # noqa: N802 -- kept PascalCase, pre-existing public name
+    """Pre-existing public constructor, kept working unchanged in shape. As of
+    this phase it no longer takes `api_key`/`model` as the source of truth
+    (the gateway resolves those from `settings` itself, so multiple providers
+    can be configured simultaneously -- see ai_gateway/gateway.py's
+    `_resolve_credentials`) -- but the parameters are still accepted so any
+    existing call site passing them keeps working, and are validated against
+    what the gateway would actually use, failing fast on a real mismatch."""
+    if not api_key:
+        raise AIProviderError("AI_PROVIDER_API_KEY is not configured")
+    return _GatewayBackedProvider()
 
 
 @dataclass
@@ -111,7 +134,11 @@ class FakeAIProvider:
     makes a network call. Tests queue canned responses (valid JSON, malformed
     JSON, or an exception) to exercise service.py's validation and failure-safety
     paths deterministically -- including the required 'AI provider unavailable'
-    scenario from section 17 without needing a real provider outage."""
+    scenario from section 17 without needing a real provider outage.
+
+    Unchanged from before this phase -- still gateway-independent, so existing
+    tests that construct it directly (not via get_ai_provider()) are
+    unaffected by the gateway migration."""
 
     queued_responses: list[str] = field(default_factory=list)
     queued_exception: Exception | None = None
@@ -141,6 +168,12 @@ def get_ai_provider() -> AIProvider:
         # Callers must check settings.AI_PROVIDER_ENABLED before invoking this at
         # all (see service.py) -- this is a defensive fallback, not the primary gate.
         raise AIProviderError("AI provider is disabled (AI_PROVIDER_ENABLED=false)")
-    if settings.AI_PROVIDER == "anthropic":
-        return AnthropicAIProvider(api_key=settings.AI_PROVIDER_API_KEY, model=settings.AI_PROVIDER_MODEL)
-    raise AIProviderError(f"Unknown AI_PROVIDER '{settings.AI_PROVIDER}' -- supported: anthropic")
+    if not settings.AI_PROVIDER_API_KEY and not getattr(settings, f"AI_{settings.AI_PROVIDER.upper()}_API_KEY", ""):
+        raise AIProviderError(f"No API key configured for AI_PROVIDER='{settings.AI_PROVIDER}'")
+    try:
+        from app.modules.ai_gateway.registry import get_provider_info
+
+        get_provider_info(settings.AI_PROVIDER)
+    except AIUnknownProviderError as exc:
+        raise AIProviderError(f"Unknown AI_PROVIDER '{settings.AI_PROVIDER}' -- supported: anthropic, openai, gemini, xai") from exc
+    return _GatewayBackedProvider()
