@@ -2,14 +2,17 @@
 
 import { useEffect, useState } from "react";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
-import { api, ApiError } from "@/lib/api-client";
+import { api, ApiError, getAccessToken } from "@/lib/api-client";
 import type { AnalyticsSummary, TimeSeriesBucket, TopEndpoint, UsageSummary } from "@/lib/types";
 import { KpiCard } from "@/components/dashboard/kpi-card";
 import { OnboardingChecklist } from "@/components/dashboard/onboarding-checklist";
 import { DateRangeFilter, resolvePreset, type DateRange } from "@/components/dashboard/date-range-filter";
 import { Card, CardHeader, CardBody } from "@/components/ui/card";
 import { StatusDot } from "@/components/ui/status-dot";
-import { Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Loader2, Download } from "lucide-react";
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 // Buckets by hour read fine over a single day, but blow up into an unreadable
 // wall of points over a week+ window -- switch to daily buckets once the
@@ -28,6 +31,39 @@ export default function DashboardPage() {
   const [usage, setUsage] = useState<UsageSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState<"deliveries-over-time" | "top-endpoints" | null>(null);
+
+  async function handleExport(report: "deliveries-over-time" | "top-endpoints") {
+    setExporting(report);
+    try {
+      const dateParams =
+        range.start && range.end
+          ? `&start_date=${encodeURIComponent(range.start)}&end_date=${encodeURIComponent(range.end)}`
+          : "";
+      const token = getAccessToken();
+      // /v1/insights is an alias of /v1/analytics -- see the note above and
+      // backend/app/modules/analytics/routes.py's module docstring.
+      const resp = await fetch(
+        `${API_BASE_URL}/v1/insights/export?report=${report}&granularity=${granularityFor(range)}${dateParams}`,
+        { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+      );
+      if (!resp.ok) {
+        alert("Failed to export CSV");
+        return;
+      }
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `relayhub_${report}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      alert("Failed to export CSV");
+    } finally {
+      setExporting(null);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -119,10 +155,21 @@ export default function DashboardPage() {
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
-          <CardHeader>
+          <CardHeader className="flex items-center justify-between gap-3">
             <h2 className="text-xs font-medium text-graphite-700 dark:text-graphite-200">
               Deliveries {granularityFor(range) === "hour" ? "per hour" : "per day"} — {range.label}
             </h2>
+            {timeSeries.length > 0 && (
+              <Button
+                size="sm"
+                variant="secondary"
+                loading={exporting === "deliveries-over-time"}
+                onClick={() => handleExport("deliveries-over-time")}
+              >
+                <Download className="h-3.5 w-3.5" />
+                Export CSV
+              </Button>
+            )}
           </CardHeader>
           <CardBody>
             {timeSeries.length === 0 ? (
@@ -172,8 +219,19 @@ export default function DashboardPage() {
       </div>
 
       <Card>
-        <CardHeader>
+        <CardHeader className="flex items-center justify-between gap-3">
           <h2 className="text-xs font-medium text-graphite-700 dark:text-graphite-200">Top endpoints — {range.label}</h2>
+          {topEndpoints.length > 0 && (
+            <Button
+              size="sm"
+              variant="secondary"
+              loading={exporting === "top-endpoints"}
+              onClick={() => handleExport("top-endpoints")}
+            >
+              <Download className="h-3.5 w-3.5" />
+              Export CSV
+            </Button>
+          )}
         </CardHeader>
         <CardBody className="p-0">
           {topEndpoints.length === 0 ? (
