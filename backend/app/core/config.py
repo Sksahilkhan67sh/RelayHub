@@ -77,14 +77,38 @@ class Settings(BaseSettings):
     INSIGHTS_ANOMALY_MIN_LATENCY_DELTA_RATIO: float = 0.5  # p95 latency must move by >=50% vs baseline
     INSIGHTS_INCIDENT_STABILITY_WINDOWS: int = 2  # consecutive healthy windows required before RESOLVED
 
-    # AI provider abstraction (Phase 3, section 8). Disabled by default -- the
-    # deterministic pipeline (health/anomaly/incident/RCA) works fully without it.
+    # AI provider abstraction (Phase 3, section 8; extended by the Universal AI
+    # Provider & Model Compatibility phase -- see backend/app/modules/ai_gateway/
+    # and docs/ai/providers.md). Disabled by default -- the deterministic
+    # pipeline (health/anomaly/incident/RCA) works fully without it.
+    #
+    # AI_PROVIDER selects the PRIMARY provider and is unchanged in meaning from
+    # before this phase: existing deployments with AI_PROVIDER=anthropic plus
+    # AI_PROVIDER_API_KEY/AI_PROVIDER_MODEL keep working with zero config
+    # changes (backward compatibility, see PHASE_UNIVERSAL_AI_AUDIT.md section 7).
     AI_PROVIDER_ENABLED: bool = False
-    AI_PROVIDER: str = "anthropic"  # anthropic | openai | none
+    AI_PROVIDER: str = "anthropic"  # anthropic | openai | gemini | xai
     AI_PROVIDER_API_KEY: str = ""
     AI_PROVIDER_MODEL: str = "claude-sonnet-4-6"
     AI_PROVIDER_TIMEOUT_SECONDS: int = 20
     AI_PROVIDER_MAX_TOKENS: int = 1000
+
+    # Optional automatic fallback provider (Step 19). Empty string (default) =
+    # no fallback; a primary-provider failure fails safe exactly as it always
+    # has. Only used for transient failures (timeout/rate-limit/unavailable),
+    # never for auth or invalid-request errors -- see ai_gateway/gateway.py.
+    AI_FALLBACK_PROVIDER: str = ""
+
+    # Per-provider credentials/model, used when that provider is AI_PROVIDER or
+    # AI_FALLBACK_PROVIDER and the generic AI_PROVIDER_API_KEY above isn't the
+    # one meant for it (e.g. AI_PROVIDER=openai, AI_FALLBACK_PROVIDER=anthropic
+    # needs both sets of credentials configured).
+    AI_OPENAI_API_KEY: str = ""
+    AI_OPENAI_MODEL: str = "gpt-4o"
+    AI_GEMINI_API_KEY: str = ""
+    AI_GEMINI_MODEL: str = "gemini-1.5-pro"
+    AI_XAI_API_KEY: str = ""
+    AI_XAI_MODEL: str = "grok-2-latest"
 
 
 @lru_cache
