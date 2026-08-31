@@ -218,6 +218,13 @@ jobs:
       - name: Create placeholder env file
         run: cp backend/.env.example backend/.env
       - name: Validate compose files
+        env:
+          # docker-compose.prod.yml requires POSTGRES_PASSWORD to be set (no
+          # hardcoded default -- see that file's postgres service). This is a
+          # syntax/interpolation check only (`config -q`), not a real deploy,
+          # so a placeholder is fine here; production still needs a real
+          # secret in infra/docker/.env.
+          POSTGRES_PASSWORD: ci-validation-placeholder-not-a-real-secret
         run: |
           docker compose -f infra/docker/docker-compose.yml config -q
           docker compose -f infra/docker/docker-compose.prod.yml config -q
