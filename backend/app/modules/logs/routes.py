@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
@@ -69,3 +69,44 @@ async def search_logs(
         offset=offset,
     )
     return [_to_out(j) for j in jobs]
+
+
+@router.get("/export")
+async def export_logs(
+    endpoint_id: uuid.UUID | None = Query(default=None),
+    status: list[str] | None = Query(default=None, description="One or more of: queued, processing, success, retrying, failed, dead_letter, pending"),
+    event_type: str | None = Query(default=None),
+    environment: str | None = Query(default=None),
+    request_id: str | None = Query(default=None),
+    worker_id: str | None = Query(default=None),
+    queued_after: datetime | None = Query(default=None),
+    queued_before: datetime | None = Query(default=None),
+    min_latency_ms: int | None = Query(default=None, ge=0),
+    max_latency_ms: int | None = Query(default=None, ge=0),
+    auth: AuthContext = Depends(require_role(Role.VIEWER)),
+    db: AsyncSession = Depends(get_db),
+):
+    # Same filters as `search_logs` above, minus limit/offset -- an export is meant
+    # to capture every matching delivery (up to service.EXPORT_MAX_ROWS), not one
+    # page of them. Unlike /v1/dlq/export (dead-letter jobs only) or
+    # /v1/insights/export (aggregated counts), this returns every individual
+    # delivery job -- success, failed, retrying, dead_letter, etc. -- one row each.
+    csv_content = await service.export_delivery_logs_csv(
+        db,
+        organization_id=auth.organization_id,
+        endpoint_id=endpoint_id,
+        statuses=status,
+        event_type=event_type,
+        environment=environment,
+        request_id=request_id,
+        worker_id=worker_id,
+        queued_after=queued_after,
+        queued_before=queued_before,
+        min_latency_ms=min_latency_ms,
+        max_latency_ms=max_latency_ms,
+    )
+    return Response(
+        content=csv_content,
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=relayhub_delivery_logs.csv"},
+    )
