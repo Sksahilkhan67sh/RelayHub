@@ -2,8 +2,8 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { ScrollText, Search, ChevronRight, ChevronDown } from "lucide-react";
-import { api, ApiError } from "@/lib/api-client";
+import { ScrollText, Search, ChevronRight, ChevronDown, Download } from "lucide-react";
+import { api, ApiError, getAccessToken } from "@/lib/api-client";
 import type { DeliveryLogEntryOut } from "@/lib/types";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -11,6 +11,8 @@ import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { TableSkeleton } from "@/components/ui/skeleton";
 import { StatusDot, statusToSignalColor } from "@/components/ui/status-dot";
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 const STATUS_FILTERS = ["queued", "processing", "success", "retrying", "failed", "dead_letter", "pending"] as const;
 const IN_FLIGHT = new Set(["queued", "processing", "retrying"]);
@@ -76,17 +78,52 @@ export default function LogsPage() {
   const [appliedFilters, setAppliedFilters] = useState<Filters>(EMPTY_FILTERS);
   const [grouped, setGrouped] = useState(true);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [exporting, setExporting] = useState(false);
+
+  function buildParams() {
+    const params = new URLSearchParams();
+    if (statusFilter) params.set("status", statusFilter);
+    if (appliedFilters.request_id) params.set("request_id", appliedFilters.request_id);
+    if (appliedFilters.event_type) params.set("event_type", appliedFilters.event_type);
+    if (appliedFilters.environment) params.set("environment", appliedFilters.environment);
+    if (appliedFilters.endpoint_id) params.set("endpoint_id", appliedFilters.endpoint_id);
+    return params;
+  }
+
+  async function handleExport() {
+    setExporting(true);
+    try {
+      const token = getAccessToken();
+      // Exports every delivery job matching the current filters -- every status
+      // (queued, processing, success, retrying, failed, dead_letter), not just
+      // whichever status chip happens to be selected on screen.
+      const resp = await fetch(`${API_BASE_URL}/v1/logs/export?${buildParams().toString()}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!resp.ok) {
+        alert("Failed to export CSV");
+        return;
+      }
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "relayhub_delivery_logs.csv";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      alert("Failed to export CSV");
+    } finally {
+      setExporting(false);
+    }
+  }
 
   async function load() {
     setLogs(null);
     setError(null);
     try {
-      const params = new URLSearchParams({ limit: "50" });
-      if (statusFilter) params.set("status", statusFilter);
-      if (appliedFilters.request_id) params.set("request_id", appliedFilters.request_id);
-      if (appliedFilters.event_type) params.set("event_type", appliedFilters.event_type);
-      if (appliedFilters.environment) params.set("environment", appliedFilters.environment);
-      if (appliedFilters.endpoint_id) params.set("endpoint_id", appliedFilters.endpoint_id);
+      const params = buildParams();
+      params.set("limit", "50");
 
       const data = await api.get<DeliveryLogEntryOut[]>(`/v1/logs?${params.toString()}`);
       setLogs(data);
@@ -131,15 +168,21 @@ export default function LogsPage() {
             Search delivery logs by request, event type, environment, or endpoint.
           </p>
         </div>
-        <label className="flex shrink-0 items-center gap-2 text-xs text-graphite-600 dark:text-graphite-400">
-          <input
-            type="checkbox"
-            checked={grouped}
-            onChange={(e) => setGrouped(e.target.checked)}
-            className="h-3.5 w-3.5 accent-signal-amber"
-          />
-          Group by event
-        </label>
+        <div className="flex shrink-0 items-center gap-3">
+          <label className="flex items-center gap-2 text-xs text-graphite-600 dark:text-graphite-400">
+            <input
+              type="checkbox"
+              checked={grouped}
+              onChange={(e) => setGrouped(e.target.checked)}
+              className="h-3.5 w-3.5 accent-signal-amber"
+            />
+            Group by event
+          </label>
+          <Button type="button" variant="secondary" size="sm" loading={exporting} onClick={handleExport}>
+            <Download className="h-3.5 w-3.5" />
+            Export CSV
+          </Button>
+        </div>
       </div>
 
       <Card className="p-4">
