@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import csv
+import io
 import uuid
 from datetime import datetime
 
@@ -90,3 +92,104 @@ async def search_delivery_logs(
 
     result = await db.execute(query)
     return list(result.scalars().unique().all())
+
+
+# Hard ceiling on rows returned in a single CSV export. Not user-configurable --
+# exists purely to keep one export request from trying to pull an organization's
+# entire delivery history into memory at once. Large historical pulls should use
+# the paginated /v1/logs search endpoint with queued_after/queued_before instead.
+EXPORT_MAX_ROWS = 20000
+
+
+async def export_delivery_logs_csv(
+    db: AsyncSession,
+    *,
+    organization_id: uuid.UUID,
+    endpoint_id: uuid.UUID | None = None,
+    statuses: list[str] | None = None,
+    event_type: str | None = None,
+    environment: str | None = None,
+    request_id: str | None = None,
+    worker_id: str | None = None,
+    queued_after: datetime | None = None,
+    queued_before: datetime | None = None,
+    min_latency_ms: int | None = None,
+    max_latency_ms: int | None = None,
+) -> str:
+    """
+    Every delivery job matching the given filters (default: no status filter, so
+    queued/processing/success/retrying/failed/dead_letter jobs are all included --
+    not just the terminal failed/dead_letter ones the DLQ export covers), one row
+    per job with its full state plus its most recent attempt's outcome.
+    """
+    from app.modules.retry.schedule import DEFAULT_MAX_ATTEMPTS
+
+    jobs = await search_delivery_logs(
+        db,
+        organization_id=organization_id,
+        endpoint_id=endpoint_id,
+        statuses=statuses,
+        event_type=event_type,
+        environment=environment,
+        request_id=request_id,
+        worker_id=worker_id,
+        queued_after=queued_after,
+        queued_before=queued_before,
+        min_latency_ms=min_latency_ms,
+        max_latency_ms=max_latency_ms,
+        limit=EXPORT_MAX_ROWS,
+        offset=0,
+    )
+
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(
+        [
+            "delivery_job_id",
+            "event_id",
+            "endpoint_id",
+            "event_type",
+            "environment",
+            "request_id",
+            "status",
+            "attempt_number",
+            "max_attempts",
+            "queued_at",
+            "next_attempt_at",
+            "completed_at",
+            "last_attempt_http_status",
+            "last_attempt_duration_ms",
+            "last_attempt_error_category",
+            "last_attempt_error_message",
+            "last_attempt_worker_id",
+            "last_attempt_region",
+        ]
+    )
+    for job in jobs:
+        latest = job.attempts[-1] if job.attempts else None
+        effective_max_attempts = (
+            job.endpoint.max_retry_attempts if job.endpoint and job.endpoint.max_retry_attempts is not None else DEFAULT_MAX_ATTEMPTS
+        )
+        writer.writerow(
+            [
+                str(job.id),
+                str(job.event_id),
+                str(job.endpoint_id),
+                job.event.event_type if job.event else "",
+                job.event.environment if job.event else "",
+                job.event.request_id if job.event else "",
+                job.status,
+                job.attempt_number,
+                effective_max_attempts,
+                job.queued_at.isoformat() if job.queued_at else "",
+                job.next_attempt_at.isoformat() if job.next_attempt_at else "",
+                job.completed_at.isoformat() if job.completed_at else "",
+                latest.http_status if latest else "",
+                latest.duration_ms if latest else "",
+                latest.error_category if latest else "",
+                latest.error_message if latest else "",
+                latest.worker_id if latest else "",
+                latest.region if latest else "",
+            ]
+        )
+    return buffer.getvalue()
