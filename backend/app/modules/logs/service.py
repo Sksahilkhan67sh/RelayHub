@@ -117,10 +117,20 @@ async def export_delivery_logs_csv(
     max_latency_ms: int | None = None,
 ) -> str:
     """
-    Every delivery job matching the given filters (default: no status filter, so
-    queued/processing/success/retrying/failed/dead_letter jobs are all included --
-    not just the terminal failed/dead_letter ones the DLQ export covers), one row
-    per job with its full state plus its most recent attempt's outcome.
+    Full delivery + retry history for every matching job (default: no status
+    filter, so queued/processing/success/retrying/failed/dead_letter are all
+    included -- not just the terminal failed/dead_letter jobs the DLQ export
+    covers).
+
+    One row per delivery ATTEMPT rather than per job, so a job that failed twice
+    before eventually succeeding shows up as three rows -- one per attempt, in
+    order -- and it's visible exactly which attempt(s) failed, with what error,
+    versus which attempt (if any) finally went through. A job with no attempts
+    yet (still sitting in `queued`) still gets one row, with attempt-specific
+    columns left blank, so nothing waiting in the retry queue is silently
+    dropped from the export. Every row also carries the full endpoint record
+    (name, URL, environment, health, active/paused state, failure streak) so
+    the export is self-contained without cross-referencing the Endpoints page.
     """
     from app.modules.retry.schedule import DEFAULT_MAX_ATTEMPTS
 
@@ -145,51 +155,65 @@ async def export_delivery_logs_csv(
     writer = csv.writer(buffer)
     writer.writerow(
         [
-            "delivery_job_id",
-            "event_id",
-            "endpoint_id",
-            "event_type",
-            "environment",
-            "request_id",
-            "status",
-            "attempt_number",
-            "max_attempts",
-            "queued_at",
-            "next_attempt_at",
-            "completed_at",
-            "last_attempt_http_status",
-            "last_attempt_duration_ms",
-            "last_attempt_error_category",
-            "last_attempt_error_message",
-            "last_attempt_worker_id",
-            "last_attempt_region",
+            # -- event / job identity --
+            "delivery_job_id", "event_id", "event_type", "environment", "request_id",
+            # -- endpoint (every endpoint field relevant to delivery) --
+            "endpoint_id", "endpoint_name", "endpoint_url", "endpoint_environment",
+            "endpoint_is_active", "endpoint_health_status", "endpoint_consecutive_failure_count",
+            "endpoint_paused_at", "endpoint_paused_reason",
+            # -- job / retry-queue state (overall outcome for this job) --
+            "job_status", "job_total_attempts_so_far", "job_max_attempts",
+            "job_queued_at", "job_next_attempt_at", "job_completed_at",
+            # -- this specific attempt (one row per attempt -- the retry history) --
+            "attempt_number", "attempt_outcome", "attempt_queued_at", "attempt_started_at",
+            "attempt_completed_at", "attempt_duration_ms", "attempt_http_status",
+            "attempt_error_category", "attempt_error_message", "attempt_worker_id",
+            "attempt_region", "attempt_destination_ip",
         ]
     )
+
     for job in jobs:
-        latest = job.attempts[-1] if job.attempts else None
+        ep = job.endpoint
         effective_max_attempts = (
-            job.endpoint.max_retry_attempts if job.endpoint and job.endpoint.max_retry_attempts is not None else DEFAULT_MAX_ATTEMPTS
+            ep.max_retry_attempts if ep and ep.max_retry_attempts is not None else DEFAULT_MAX_ATTEMPTS
         )
-        writer.writerow(
-            [
-                str(job.id),
-                str(job.event_id),
-                str(job.endpoint_id),
-                job.event.event_type if job.event else "",
-                job.event.environment if job.event else "",
-                job.event.request_id if job.event else "",
-                job.status,
-                job.attempt_number,
-                effective_max_attempts,
-                job.queued_at.isoformat() if job.queued_at else "",
-                job.next_attempt_at.isoformat() if job.next_attempt_at else "",
-                job.completed_at.isoformat() if job.completed_at else "",
-                latest.http_status if latest else "",
-                latest.duration_ms if latest else "",
-                latest.error_category if latest else "",
-                latest.error_message if latest else "",
-                latest.worker_id if latest else "",
-                latest.region if latest else "",
-            ]
-        )
+        job_fields = [
+            str(job.id), str(job.event_id), job.event.event_type if job.event else "",
+            job.event.environment if job.event else "", job.event.request_id if job.event else "",
+            str(job.endpoint_id), ep.name if ep else "", ep.url if ep else "",
+            ep.environment if ep else "", ep.is_active if ep else "", ep.health_status if ep else "",
+            ep.consecutive_failure_count if ep else "",
+            ep.paused_at.isoformat() if ep and ep.paused_at else "",
+            ep.paused_reason if ep else "",
+            job.status, job.attempt_number, effective_max_attempts,
+            job.queued_at.isoformat() if job.queued_at else "",
+            job.next_attempt_at.isoformat() if job.next_attempt_at else "",
+            job.completed_at.isoformat() if job.completed_at else "",
+        ]
+
+        if not job.attempts:
+            # Nothing has been attempted yet (e.g. still sitting in `queued`) --
+            # still emit the job/endpoint context with blank attempt columns.
+            writer.writerow(job_fields + ["", "", "", "", "", "", "", "", "", "", "", ""])
+            continue
+
+        for attempt in job.attempts:
+            outcome = "success" if attempt.error_category == "none" and attempt.http_status and 200 <= attempt.http_status < 300 else "failed"
+            writer.writerow(
+                job_fields
+                + [
+                    attempt.attempt_number,
+                    outcome,
+                    attempt.queued_at.isoformat() if attempt.queued_at else "",
+                    attempt.started_at.isoformat() if attempt.started_at else "",
+                    attempt.completed_at.isoformat() if attempt.completed_at else "",
+                    attempt.duration_ms,
+                    attempt.http_status if attempt.http_status is not None else "",
+                    attempt.error_category,
+                    attempt.error_message or "",
+                    attempt.worker_id,
+                    attempt.region,
+                    attempt.destination_ip or "",
+                ]
+            )
     return buffer.getvalue()
