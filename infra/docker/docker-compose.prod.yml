@@ -23,6 +23,14 @@
 #
 # Usage:
 #   cp backend/.env.example backend/.env   # then fill in real production values
+#   Also create infra/docker/.env with POSTGRES_PASSWORD=<a real secret> -- this is
+#   a *separate* file from backend/.env: backend/.env is injected into the
+#   api/worker/beat containers via `env_file:` below, while infra/docker/.env is
+#   read by Compose itself for the ${...} substitution directly below (Compose's
+#   own convention: it looks for a `.env` file next to the compose file being run).
+#   Whatever password you set there must match what you put in backend/.env's
+#   DATABASE_URL, since that's what the api/worker containers actually connect
+#   with -- this postgres service is just the bundled container providing it.
 #   docker compose -f infra/docker/docker-compose.prod.yml up -d --build
 
 version: "3.9"
@@ -31,9 +39,9 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: relayhub
-      POSTGRES_PASSWORD: relayhub
-      POSTGRES_DB: relayhub
+      POSTGRES_USER: ${POSTGRES_USER:-relayhub}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in infra/docker/.env -- no hardcoded default in production}
+      POSTGRES_DB: ${POSTGRES_DB:-relayhub}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
