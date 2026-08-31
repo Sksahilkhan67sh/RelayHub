@@ -16,6 +16,12 @@ on:
   pull_request:
     branches: [main]
 
+# Least privilege: every job here only checks out code and runs tests/builds --
+# none of them push commits, comment on PRs, or create releases/artifacts that
+# need write access, so the default GITHUB_TOKEN is scoped down to read-only.
+permissions:
+  contents: read
+
 jobs:
   backend:
     runs-on: ubuntu-latest
@@ -197,6 +203,9 @@ jobs:
         run: npx tsc --noEmit -p tsconfig.json
       - working-directory: cli
         run: npx tsc -p tsconfig.json
+      - name: Unit tests
+        working-directory: cli
+        run: npm run pretest && npm test
       - name: Smoke tests
         working-directory: cli
         run: |
