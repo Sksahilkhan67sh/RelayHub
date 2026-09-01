@@ -26,8 +26,18 @@ class Settings(BaseSettings):
     PASSWORD_RESET_TOKEN_EXPIRE_MINUTES: int = 30
     INVITATION_TOKEN_EXPIRE_DAYS: int = 7
 
-    # Used to build links embedded in transactional emails (reset link, invite link).
+    # Used to build links embedded in transactional emails (reset link, invite link),
+    # and where GitHub OAuth login redirects back to once tokens are issued.
     FRONTEND_URL: str = "http://localhost:3000"
+
+    # GitHub OAuth login (see auth/github_oauth.py). Disabled -- the "Continue with
+    # GitHub" button/endpoints return a clear error -- whenever CLIENT_ID is empty,
+    # so this is safe to leave unset in any environment that doesn't need it.
+    # Create the OAuth App at https://github.com/settings/developers ; its
+    # "Authorization callback URL" must exactly match GITHUB_OAUTH_REDIRECT_URI.
+    GITHUB_OAUTH_CLIENT_ID: str = ""
+    GITHUB_OAUTH_CLIENT_SECRET: str = ""
+    GITHUB_OAUTH_REDIRECT_URI: str = "http://localhost:8000/v1/auth/github/callback"
 
     # Database
     DATABASE_URL: str = Field(..., description="postgresql+asyncpg://user:pass@host:5432/db")

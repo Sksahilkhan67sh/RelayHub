@@ -37,7 +37,7 @@ async def invite_member(
 ):
     return await org_service.invite_member(
         db, organization_id=auth.organization_id, email=payload.email, role=payload.role,
-        actor_user_id=auth.user_id, ip_address=request.client.host if request.client else None,
+        actor_user_id=auth.user_id, actor_role=auth.role, ip_address=request.client.host if request.client else None,
     )
 
 
@@ -49,7 +49,8 @@ async def update_member_role(
     db: AsyncSession = Depends(get_db),
 ):
     await org_service.update_member_role(
-        db, organization_id=auth.organization_id, target_user_id=user_id, new_role=payload.role, actor_user_id=auth.user_id
+        db, organization_id=auth.organization_id, target_user_id=user_id, new_role=payload.role,
+        actor_user_id=auth.user_id, actor_role=auth.role,
     )
 
 
@@ -57,7 +58,7 @@ async def update_member_role(
 async def remove_member(
     user_id: uuid.UUID, auth: AuthContext = Depends(require_role(Role.ADMIN)), db: AsyncSession = Depends(get_db)
 ):
-    await org_service.remove_member(db, organization_id=auth.organization_id, target_user_id=user_id)
+    await org_service.remove_member(db, organization_id=auth.organization_id, target_user_id=user_id, actor_role=auth.role)
 
 
 @router.patch("", response_model=OrganizationOut)
@@ -113,7 +114,7 @@ async def create_invitation(
 ):
     return await invitation_service.create_invitation(
         db, organization_id=auth.organization_id, email=payload.email, role=payload.role,
-        actor_user_id=auth.user_id, notification_dispatcher=notification_dispatcher,
+        actor_user_id=auth.user_id, actor_role=auth.role, notification_dispatcher=notification_dispatcher,
         ip_address=request.client.host if request.client else None,
     )
 

@@ -1,12 +1,26 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { Suspense, useState, type FormEvent } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useAuth, getAuthErrorMessage } from "@/lib/auth-context";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardBody } from "@/components/ui/card";
 import { RelayHubMark } from "@/components/ui/logo";
+import { Github } from "lucide-react";
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+function GitHubSignInError() {
+  const searchParams = useSearchParams();
+  if (searchParams.get("error") !== "github_signin_failed") return null;
+  return (
+    <p className="text-xs text-signal-red">
+      GitHub sign-in didn&apos;t complete. Please try again.
+    </p>
+  );
+}
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -39,6 +53,23 @@ export default function LoginPage() {
         <Card>
           <CardBody className="flex flex-col gap-4">
             <h1 className="text-base font-semibold text-graphite-950 dark:text-graphite-50">Sign in</h1>
+
+            <Suspense fallback={null}>
+              <GitHubSignInError />
+            </Suspense>
+
+            <a href={`${API_BASE_URL}/v1/auth/github/login`} className="block">
+              <Button type="button" variant="secondary" className="w-full">
+                <Github className="h-4 w-4" />
+                Continue with GitHub
+              </Button>
+            </a>
+
+            <div className="flex items-center gap-3">
+              <div className="h-px flex-1 bg-graphite-200 dark:bg-graphite-700" />
+              <span className="text-xs text-graphite-500 dark:text-graphite-400">or</span>
+              <div className="h-px flex-1 bg-graphite-200 dark:bg-graphite-700" />
+            </div>
 
             <form onSubmit={handleSubmit} className="flex flex-col gap-3">
               <Input

@@ -19,6 +19,7 @@ from app.modules.alerts.routes import router as alerts_router
 from app.modules.analytics.routes import router as analytics_router
 from app.modules.api_keys.routes import router as api_keys_router
 from app.modules.audit.routes import router as audit_router
+from app.modules.auth.github_oauth_routes import router as github_oauth_router
 from app.modules.auth.invitation_routes import router as invitations_router
 from app.modules.auth.org_routes import router as org_router
 from app.modules.auth.routes import router as auth_router
@@ -82,6 +83,7 @@ if setup_tracing("relayhub-api") is not None:
     FastAPIInstrumentor.instrument_app(app, excluded_urls="/health/live,/health/ready,/metrics")
 
 app.include_router(auth_router, prefix=settings.API_V1_PREFIX)
+app.include_router(github_oauth_router, prefix=settings.API_V1_PREFIX)
 app.include_router(org_router, prefix=settings.API_V1_PREFIX)
 app.include_router(invitations_router, prefix=settings.API_V1_PREFIX)
 app.include_router(audit_router, prefix=settings.API_V1_PREFIX)

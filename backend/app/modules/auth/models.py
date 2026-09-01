@@ -53,6 +53,10 @@ class User(Base, UUIDPKMixin, TimestampMixin, SoftDeleteMixin):
     is_platform_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     failed_login_attempts: Mapped[int] = mapped_column(default=0, nullable=False)
     locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # GitHub's numeric user id (stable even across username changes), set the first
+    # time this account signs in via GitHub OAuth -- see auth/github_oauth.py. Null
+    # for accounts that have never used GitHub sign-in.
+    github_id: Mapped[str | None] = mapped_column(String(32), nullable=True, unique=True, index=True)
 
     memberships: Mapped[list["Membership"]] = relationship(back_populates="user")
 
