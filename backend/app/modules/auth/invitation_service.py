@@ -33,9 +33,16 @@ async def create_invitation(
     email: str,
     role: Role,
     actor_user_id: uuid.UUID,
+    actor_role: Role,
     notification_dispatcher: NotificationDispatcher,
     ip_address: str | None,
 ) -> Invitation:
+    if role == Role.OWNER and actor_role != Role.OWNER:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            detail="Only an existing owner can invite someone as owner.",
+        )
+
     existing_member = (
         await db.execute(
             select(Membership)

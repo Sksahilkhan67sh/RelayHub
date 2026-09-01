@@ -35,18 +35,21 @@ async def list_members(db: AsyncSession, *, organization_id: uuid.UUID) -> list[
 
 
 async def invite_member(
-    db: AsyncSession, *, organization_id: uuid.UUID, email: str, role: Role, actor_user_id: uuid.UUID, ip_address: str | None
+    db: AsyncSession, *, organization_id: uuid.UUID, email: str, role: Role, actor_user_id: uuid.UUID,
+    actor_role: Role, ip_address: str | None
 ) -> dict:
     """
-    Directly adds an existing RelayHub user to the organization. This is a
-    documented, real limitation: there is no email-based invite-token/accept flow
-    built yet (that would need a signed invite token, a public accept-invite
-    registration path, and transactional email delivery for people who don't have
-    accounts -- meaningfully more scope than this pass covers). Today, "invite"
-    requires the invitee to already have a RelayHub account; access is granted
-    immediately rather than left in a perpetual unactionable "pending" state, since
-    there's no separate acceptance step for them to complete.
+    Directly adds an existing RelayHub user to the organization, with membership
+    active immediately (no separate acceptance step) -- for the invitee-has-no-account
+    case, see invitation_service.create_invitation instead, which handles the
+    email-token / accept-registration flow.
     """
+    if role == Role.OWNER and actor_role != Role.OWNER:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            detail="Only an existing owner can grant the owner role.",
+        )
+
     invitee = (await db.execute(select(User).where(User.email == email))).scalar_one_or_none()
     if not invitee:
         raise HTTPException(
@@ -96,7 +99,8 @@ async def _count_owners(db: AsyncSession, *, organization_id: uuid.UUID) -> int:
 
 
 async def update_member_role(
-    db: AsyncSession, *, organization_id: uuid.UUID, target_user_id: uuid.UUID, new_role: Role, actor_user_id: uuid.UUID
+    db: AsyncSession, *, organization_id: uuid.UUID, target_user_id: uuid.UUID, new_role: Role, actor_user_id: uuid.UUID,
+    actor_role: Role,
 ) -> None:
     membership = (
         await db.execute(
@@ -106,6 +110,17 @@ async def update_member_role(
     if not membership:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Member not found")
 
+    # Changing a role to or from OWNER is itself a change in who has ultimate
+    # control of the organization, so -- unlike ordinary admin<->member<->viewer
+    # changes -- it requires the actor to already be an owner. Without this, an
+    # admin could promote themselves (or an ally) to owner, or demote an existing
+    # owner, with no owner ever approving it.
+    if (new_role == Role.OWNER or membership.role == Role.OWNER.value) and actor_role != Role.OWNER:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            detail="Only an existing owner can grant or remove the owner role.",
+        )
+
     if membership.role == Role.OWNER.value and new_role != Role.OWNER and await _count_owners(db, organization_id=organization_id) <= 1:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Cannot demote the last owner. Promote another member to owner first.")
 
@@ -113,7 +128,9 @@ async def update_member_role(
     await db.commit()
 
 
-async def remove_member(db: AsyncSession, *, organization_id: uuid.UUID, target_user_id: uuid.UUID) -> None:
+async def remove_member(
+    db: AsyncSession, *, organization_id: uuid.UUID, target_user_id: uuid.UUID, actor_role: Role,
+) -> None:
     membership = (
         await db.execute(
             select(Membership).where(Membership.organization_id == organization_id, Membership.user_id == target_user_id)
@@ -122,8 +139,13 @@ async def remove_member(db: AsyncSession, *, organization_id: uuid.UUID, target_
     if not membership:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Member not found")
 
-    if membership.role == Role.OWNER.value and await _count_owners(db, organization_id=organization_id) <= 1:
-        raise HTTPException(status.HTTP_409_CONFLICT, detail="Cannot remove the last owner.")
+    if membership.role == Role.OWNER.value:
+        # Same rationale as update_member_role: removing an owner is a change in
+        # ultimate control and requires another owner to approve it, not just an admin.
+        if actor_role != Role.OWNER:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Only an existing owner can remove an owner.")
+        if await _count_owners(db, organization_id=organization_id) <= 1:
+            raise HTTPException(status.HTTP_409_CONFLICT, detail="Cannot remove the last owner.")
 
     await db.delete(membership)
     await db.commit()
