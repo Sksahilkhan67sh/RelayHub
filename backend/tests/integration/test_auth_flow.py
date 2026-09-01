@@ -172,6 +172,21 @@ async def test_me_endpoint_returns_profile(client, unique_email):
 
 
 @pytest.mark.asyncio
+async def test_me_endpoint_returns_401_not_500_for_deleted_user(client):
+    """A valid, unexpired access token can still point at a user_id that no longer
+    has a row (e.g. an old browser tab's token after the account was deleted).
+    That's a 401 asking the client to sign in again, not an unhandled 500."""
+    import uuid
+
+    from app.core.security import create_access_token
+
+    token = create_access_token(user_id=str(uuid.uuid4()), org_id=str(uuid.uuid4()), role="owner")
+
+    resp = await client.get("/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
 async def test_me_endpoint_exposes_is_platform_admin(client, unique_email, db_session):
     """
     Regression test: is_platform_admin was previously missing from /me's response
