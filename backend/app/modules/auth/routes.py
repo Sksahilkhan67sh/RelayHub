@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -71,8 +71,19 @@ async def logout(auth: AuthContext = Depends(get_current_auth), db: AsyncSession
 
 @router.get("/me", response_model=MeResponse)
 async def me(auth: AuthContext = Depends(get_current_auth), db: AsyncSession = Depends(get_db)):
-    user = (await db.execute(select(User).where(User.id == auth.user_id))).scalar_one()
-    org = (await db.execute(select(Organization).where(Organization.id == auth.organization_id))).scalar_one()
+    # auth.user_id/organization_id come straight from the JWT's claims, not a fresh
+    # DB lookup -- a token can still be validly signed and unexpired even though the
+    # account (or its membership in this org) was deleted after the token was
+    # issued. That's a real, expected case (e.g. an old browser tab with a stale
+    # token from before an account was removed), not a server error, so it's a 401
+    # asking the client to sign in again, not an unhandled 500.
+    user = (await db.execute(select(User).where(User.id == auth.user_id))).scalar_one_or_none()
+    org = (await db.execute(select(Organization).where(Organization.id == auth.organization_id))).scalar_one_or_none()
+    if user is None or org is None:
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED, detail="Session is no longer valid. Please sign in again.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     return MeResponse(user=UserOut.model_validate(user), organization=OrganizationOut.model_validate(org), role=auth.role)
 
 
