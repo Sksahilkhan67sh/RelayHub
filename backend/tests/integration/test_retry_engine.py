@@ -53,6 +53,61 @@ async def test_retrying_job_gets_increasing_next_attempt_at(client, unique_email
 
 
 @pytest.mark.asyncio
+async def test_full_retry_loop_scanner_actually_triggers_second_attempt(client, unique_email, db_session):
+    """
+    Regression test for a real production bug: every other test in this file
+    calls execute_delivery_job() directly, a second time, to simulate a retry --
+    which exercises the executor's own claim/scheduling logic but never proves
+    the *scanner* (enqueue_due_retries) is what actually drives a second attempt
+    in production. In production, start.sh only ran a Celery worker + uvicorn,
+    with no `celery beat` process -- so check_due_retries (the periodic task
+    that calls enqueue_due_retries) never ran at all, and every job that failed
+    its first attempt sat in status=retrying forever. This test goes through the
+    real loop: scanner finds the due job -> pushes it onto a queue -> whatever's
+    listening on that queue claims and executes it -- with no shortcut back to
+    calling execute_delivery_job a second time by hand.
+    """
+    token = await register_and_get_token(client, unique_email)
+    await create_endpoint(client, token)
+    api_key = await create_api_key(client, token)
+
+    publish_resp = await client.post(
+        "/v1/events", json={"event": "payment.success", "payload": {}}, headers={"X-RelayHub-Api-Key": api_key}
+    )
+    job_id = uuid.UUID(publish_resp.json()["delivery_jobs"][0]["id"])
+
+    mock_client = httpx.AsyncClient(transport=httpx.MockTransport(_always_503))
+
+    # Attempt 1: dispatched synchronously at publish time in real production
+    # (app/modules/events/service.py) -- simulated directly here since that part
+    # was never in question.
+    job = await execute_delivery_job(db_session, job_id=job_id, http_client=mock_client)
+    assert job.status == DeliveryJobStatus.RETRYING.value
+    assert job.attempt_number == 1
+    assert job.next_attempt_at is not None
+
+    # Force the schedule to be due "now" rather than actually waiting out the
+    # ~10s jittered delay.
+    job.next_attempt_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+    await db_session.commit()
+
+    from app.common.queue_client import InMemoryQueueClient
+
+    fake_queue = InMemoryQueueClient()
+    due_ids = await enqueue_due_retries(db_session, queue_client=fake_queue, now=datetime.now(timezone.utc))
+    assert due_ids == [job_id], "the scanner must find this job due for its 2nd attempt"
+    assert fake_queue.queued == [job_id], "and must actually push it onto the queue -- this is the step that was missing"
+
+    # What a real worker consuming that queue message does: claim + execute.
+    queued_job_id = fake_queue.queued[0]
+    job = await execute_delivery_job(db_session, job_id=queued_job_id, http_client=mock_client)
+    assert job.attempt_number == 2, "the 2nd attempt must actually happen, not just get scheduled"
+    assert job.status == DeliveryJobStatus.RETRYING.value
+
+    await mock_client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_job_moves_to_dead_letter_after_exhausting_endpoint_override_attempts(client, unique_email, db_session):
     token = await register_and_get_token(client, unique_email)
     endpoint_id = await create_endpoint(client, token)

@@ -25,6 +25,10 @@ venv/
 .coverage
 coverage/
 htmlcov/
+# Celery beat's runtime schedule state (a local dbm/shelve file) -- was
+# accidentally committed once (see start.sh's history); it's per-instance
+# runtime state, not something that should ever be baked into a deploy image.
+celerybeat-schedule*
 
 # --- Node / TypeScript / Next.js ----------------------------------------
 node_modules/
