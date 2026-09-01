@@ -4,9 +4,9 @@
 
 1. **Historical failures already fixed by later commits (before this audit):** 195 — spans 14 (job, failed-step) groups, all reproduced as clean/passing against current `main` (locally where the sandbox could run the toolchain — Python/Node/Go — and via a real GitHub Actions run for Java/Docker, which the sandbox could not run at all).
 2. **Historical failures whose root cause was fixed during this task:** 0. One change was made and merged (`sdks/java/pom.xml`, PR #1), but verification showed the commit before it already passed cleanly on GitHub's real runner — the change is a legitimate improvement with no regression, not a fix for a live bug.
-3. **Historical failures caused by environment/transient issues:** 10, tentatively — the "instant whole-run failure" cluster (6-7 jobs failing together in under 3 seconds, no step reached, in two tight bursts of rapid commits). This is a reasonable hypothesis, not a confirmed one.
-4. **Historical failures that cannot be conclusively determined:** the same 10 — raw logs for these (and all 205 runs) were unreachable from the audit sandbox (GitHub redirects job logs to Azure Blob Storage, outside the sandbox's network allowlist), and no annotation data was available for them either.
-5. **Current main CI status: GREEN.**
+3. **Historical failures caused by environment/transient issues:** 0 confirmed. 10 runs (two bursts of 5, on 2026-08-22 and 2026-08-30) show a pattern strongly consistent with a transient runner-provisioning failure — every independent job across all 10 runs shows `runner_id: 0` (no runner ever assigned) and fails within 1-3 seconds, before any step runs. But no public GitHub status incident corroborates either exact time window, so this is not asserted as confirmed.
+4. **Historical failures that cannot be conclusively determined:** 10 — the same cluster. Full run IDs, commit SHAs, and the complete evidence trail (job telemetry, workflow-history checks, public-incident-history check) are in `CI_ROOT_CAUSE_ANALYSIS.md` under "Deep-dive." Raw log content for these (and all 205 runs) was unreachable from the audit sandbox (GitHub redirects job logs to Azure Blob Storage, outside the sandbox's network allowlist) — though for jobs that never got a runner assigned, there is likely no log to retrieve regardless.
+5. **Current main CI status: GREEN**, confirmed on commits made after both burst windows — this pattern has not recurred and does not affect `main` today.
 
 ## Verification evidence
 
