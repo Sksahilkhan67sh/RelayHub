@@ -57,6 +57,61 @@ body {
   }
 }
 
+/* ---------------------------------------------------------------------
+   Scrollbar
+   A slim, rounded track/thumb in the graphite scale, with the thumb
+   picking up the amber accent on hover -- same accent used for focus
+   rings and the "glow" shadows, so it reads as part of the existing
+   palette rather than a bolted-on decoration. Firefox gets the same
+   look via scrollbar-color; there's no equivalent hover control there,
+   so it stays a flat two-tone rather than trying to fake the transition.
+--------------------------------------------------------------------- */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+:root {
+  --scrollbar-thumb: theme(colors.graphite.300);
+  --scrollbar-thumb-light: theme(colors.graphite.200);
+  --scrollbar-thumb-hover: theme(colors.signal.amber);
+  --scrollbar-thumb-hover-light: theme(colors.signal.amber-soft);
+}
+
+.dark {
+  --scrollbar-thumb: theme(colors.graphite.700);
+  --scrollbar-thumb-light: theme(colors.graphite.600);
+  --scrollbar-thumb-hover: theme(colors.signal.amber);
+  --scrollbar-thumb-hover-light: theme(colors.signal.amber);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, var(--scrollbar-thumb-light), var(--scrollbar-thumb));
+  border-radius: 999px;
+  border: 2px solid var(--bg-app);
+  background-clip: padding-box;
+  transition: background 0.15s ease;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, var(--scrollbar-thumb-hover-light), var(--scrollbar-thumb-hover));
+  background-clip: padding-box;
+  box-shadow: 0 0 0 3px rgba(193, 127, 43, 0.18);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 @keyframes relay-pulse {
   0% {
     left: 0%;
