@@ -66,13 +66,16 @@ class Settings(BaseSettings):
     STRIPE_SECRET_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""
 
-    # Notifications
-    SMTP_HOST: str = ""
-    SMTP_PORT: int = 587
-    SMTP_USERNAME: str = ""
-    SMTP_PASSWORD: str = ""
-    SMTP_FROM_EMAIL: str = "alerts@relayhub.dev"
-    SMTP_USE_TLS: bool = True
+    # Notifications -- email delivery via Resend's HTTP API (https://resend.com),
+    # not SMTP. This started as SMTP but that broke in production: Render (and
+    # many other PaaS free tiers) block outbound SMTP ports at the network level,
+    # so smtplib's raw socket connect failed with "OSError: [Errno 101] Network
+    # is unreachable" regardless of how correct the SMTP credentials were. An
+    # HTTPS API call has no such problem. Leave RESEND_API_KEY empty to disable
+    # email sending entirely -- see notification_client.py's _send_email, which
+    # raises a clear NotificationDeliveryError rather than silently dropping mail.
+    RESEND_API_KEY: str = ""
+    EMAIL_FROM_ADDRESS: str = "RelayHub <alerts@relayhub.dev>"
 
     # Observability
     OTEL_EXPORTER_OTLP_ENDPOINT: str = ""

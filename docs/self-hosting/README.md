@@ -54,7 +54,7 @@ and **must** be set or the API fails to start (`SECRET_KEY`,
 | `BLOCK_PRIVATE_IP_TARGETS` | `true` | SSRF protection for endpoint URLs -- leave `true` unless you have a specific reason not to |
 | `ALLOW_HTTP_ENDPOINTS_IN_DEV` | `true` | allows non-HTTPS endpoint URLs; set `false` in production |
 | `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` | empty | leave empty to run without billing enforcement in dev |
-| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USERNAME` / `SMTP_PASSWORD` / `SMTP_FROM_EMAIL` / `SMTP_USE_TLS` | empty / `587` / ... | leave `SMTP_HOST` empty and password-reset/invite emails will fail to send but the API will still start |
+| `RESEND_API_KEY` / `EMAIL_FROM_ADDRESS` | empty / `RelayHub <alerts@relayhub.dev>` | leave `RESEND_API_KEY` empty and password-reset/invite emails will fail to send but the API will still start. Uses Resend's HTTP API (not SMTP) -- SMTP is blocked outbound by many PaaS free tiers |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | empty | see Observability note below -- setting this alone does not enable tracing, no exporter code is wired up yet |
 | `LOG_LEVEL` | `INFO` | |
 
@@ -147,9 +147,9 @@ docker compose down -v       # stop containers AND delete the pgdata volume (des
   service is actually healthy first (`docker compose ps`) -- the `api` service
   depends on `postgres`'s healthcheck, but if Postgres is slow to initialize on
   first volume creation this can still race.
-- **Password reset / invitation emails never arrive:** `SMTP_HOST` is empty by
-  default. Set the `SMTP_*` variables to a real relay to receive them; without
-  them, the API still returns success responses (the generic "if this email
+- **Password reset / invitation emails never arrive:** `RESEND_API_KEY` is empty by
+  default. Set it to a real Resend API key to receive them; without
+  it, the API still returns success responses (the generic "if this email
   exists" message on `/auth/forgot-password`) but nothing is actually sent.
 - **Deliveries never leave `queued`:** confirm the `worker` container is
   running and healthy (`docker compose ps`) -- delivery execution is entirely

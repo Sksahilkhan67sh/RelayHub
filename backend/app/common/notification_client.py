@@ -3,7 +3,7 @@ Notification dispatch for the Alerts module.
 
 Follows the same shape as common/queue_client.py: a Protocol, real production
 implementations, and an injectable in-memory implementation so alert-triggering
-logic is fully unit-testable without live Slack/Discord/SMTP.
+logic is fully unit-testable without live Slack/Discord/email network calls.
 
 SMS is deliberately left as an architecture hook, not a working implementation --
 the spec itself lists it as "SMS architecture hooks" (as opposed to a required working
@@ -13,9 +13,6 @@ honest implementation here, not a corner cut.
 
 from __future__ import annotations
 
-import asyncio
-import smtplib
-from email.mime.text import MIMEText
 from functools import lru_cache
 from typing import Protocol
 
@@ -41,10 +38,7 @@ class RealNotificationDispatcher:
         elif channel == "webhook":
             await self._send_webhook(config, subject, message)
         elif channel == "email":
-            # smtplib is blocking; running it directly on the event loop would
-            # stall every other in-flight request for the duration of the SMTP
-            # connect/TLS/login/send round trip. Offload to a worker thread.
-            await asyncio.to_thread(self._send_email, config, subject, message)
+            await self._send_email(config, subject, message)
         elif channel == "sms":
             raise NotImplementedError(
                 "SMS is an architecture hook per spec, not yet a working channel. "
@@ -80,24 +74,27 @@ class RealNotificationDispatcher:
             if resp.status_code >= 400:
                 raise NotificationDeliveryError(f"Alert webhook returned HTTP {resp.status_code}")
 
-    def _send_email(self, config: dict, subject: str, message: str) -> None:
+    async def _send_email(self, config: dict, subject: str, message: str) -> None:
         to_address = config.get("to_address")
         if not to_address:
             raise NotificationDeliveryError("Email channel config missing 'to_address'")
-        if not settings.SMTP_HOST:
-            raise NotificationDeliveryError("SMTP_HOST is not configured -- cannot send email alerts")
+        if not settings.RESEND_API_KEY:
+            raise NotificationDeliveryError("RESEND_API_KEY is not configured -- cannot send email")
 
-        msg = MIMEText(message)
-        msg["Subject"] = subject
-        msg["From"] = settings.SMTP_FROM_EMAIL
-        msg["To"] = to_address
-
-        with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10) as server:
-            if settings.SMTP_USE_TLS:
-                server.starttls()
-            if settings.SMTP_USERNAME:
-                server.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
-            server.send_message(msg)
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                "https://api.resend.com/emails",
+                headers={"Authorization": f"Bearer {settings.RESEND_API_KEY}"},
+                json={
+                    "from": settings.EMAIL_FROM_ADDRESS,
+                    "to": [to_address],
+                    "subject": subject,
+                    "text": message,
+                },
+                timeout=10,
+            )
+            if resp.status_code >= 400:
+                raise NotificationDeliveryError(f"Resend API returned HTTP {resp.status_code}: {resp.text[:300]}")
 
 
 class InMemoryNotificationDispatcher:
