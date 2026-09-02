@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException, status
@@ -14,6 +15,8 @@ from app.modules.audit import service as audit_service
 from app.modules.audit.models import AuditAction
 from app.modules.auth import service as auth_service
 from app.modules.auth.models import PasswordResetToken, User
+
+logger = logging.getLogger(__name__)
 
 GENERIC_FORGOT_PASSWORD_MESSAGE = "If an account exists for that email, a password reset link has been sent."
 INVALID_OR_EXPIRED_TOKEN_MESSAGE = "Invalid or expired reset token"
@@ -71,18 +74,32 @@ async def request_password_reset(
     await db.commit()
 
     reset_link = f"{settings.FRONTEND_URL}/reset-password?token={raw_token}"
-    await notification_dispatcher.send(
-        channel="email",
-        config={"to_address": user.email},
-        subject="Reset your RelayHub password",
-        message=(
-            "We received a request to reset your RelayHub password. Click the link below to "
-            f"choose a new one -- it expires in {settings.PASSWORD_RESET_TOKEN_EXPIRE_MINUTES} minutes "
-            "and can only be used once.\n\n"
-            f"{reset_link}\n\n"
-            "If you didn't request this, you can safely ignore this email; your password will not change."
-        ),
-    )
+    # G-INVITE-1-style fix, but with an extra reason here specifically: this
+    # function's whole contract (see its docstring) is responding identically
+    # whether or not `email` belongs to a real account, to prevent enumeration.
+    # An unguarded send() failing here broke that -- a real active user would 500
+    # while a nonexistent email silently returned 200, which is itself an
+    # enumeration side-channel through the response status. The reset token is
+    # already durably committed above regardless of whether the email succeeds.
+    try:
+        await notification_dispatcher.send(
+            channel="email",
+            config={"to_address": user.email},
+            subject="Reset your RelayHub password",
+            message=(
+                "We received a request to reset your RelayHub password. Click the link below to "
+                f"choose a new one -- it expires in {settings.PASSWORD_RESET_TOKEN_EXPIRE_MINUTES} minutes "
+                "and can only be used once.\n\n"
+                f"{reset_link}\n\n"
+                "If you didn't request this, you can safely ignore this email; your password will not change."
+            ),
+        )
+    except Exception:  # noqa: BLE001 - email delivery failure must never propagate to the caller
+        logger.exception(
+            "password_reset: failed to send reset email for user=%s -- the reset token is "
+            "already durably committed; this must not change this endpoint's response",
+            user.id,
+        )
 
 
 async def confirm_password_reset(

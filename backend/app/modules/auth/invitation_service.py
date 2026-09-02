@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -18,6 +19,8 @@ from app.modules.auth.dependencies import AuthContext
 from app.modules.auth.models import Invitation, Membership, Organization, Role, User
 from app.modules.auth.schemas import TokenResponse
 from app.modules.notifications import service as notifications_service
+
+logger = logging.getLogger(__name__)
 
 _STATUS_MESSAGES = {
     "accepted": "This invitation has already been accepted",
@@ -89,16 +92,31 @@ async def create_invitation(
     await db.refresh(invitation)
 
     accept_link = f"{settings.FRONTEND_URL}/accept-invitation?token={raw_token}"
-    await notification_dispatcher.send(
-        channel="email",
-        config={"to_address": email},
-        subject=f"You've been invited to join {org.name} on RelayHub",
-        message=(
-            f"You've been invited to join {org.name} on RelayHub as {role.value}. "
-            f"This invitation expires in {settings.INVITATION_TOKEN_EXPIRE_DAYS} days.\n\n"
-            f"{accept_link}"
-        ),
-    )
+    # G-INVITE-1 fix: the invitation row above is already committed by this point --
+    # a failure sending the email (e.g. RESEND_API_KEY unset, or Resend itself being
+    # down) must never turn an already-successful invite into an unhandled 500. That
+    # used to happen here, and worse: because the invitation *was* already saved,
+    # the client's natural retry-on-error then hit the "already pending" 409 check
+    # above, making a genuinely successful invite look permanently broken. Best-effort
+    # send, matching the same failure-isolation pattern already used for realtime
+    # event publishing (see realtime/events.py's publish_delivery_updated).
+    try:
+        await notification_dispatcher.send(
+            channel="email",
+            config={"to_address": email},
+            subject=f"You've been invited to join {org.name} on RelayHub",
+            message=(
+                f"You've been invited to join {org.name} on RelayHub as {role.value}. "
+                f"This invitation expires in {settings.INVITATION_TOKEN_EXPIRE_DAYS} days.\n\n"
+                f"{accept_link}"
+            ),
+        )
+    except Exception:  # noqa: BLE001 - email delivery failure must never propagate to the caller
+        logger.exception(
+            "invitations: failed to send invite email for invitation=%s (org=%s) -- "
+            "the invitation itself is already durably committed and usable via its link",
+            invitation.id, organization_id,
+        )
 
     return invitation
 
@@ -309,15 +327,22 @@ async def resend_invitation(
     await db.refresh(invitation)
 
     accept_link = f"{settings.FRONTEND_URL}/accept-invitation?token={raw_token}"
-    await notification_dispatcher.send(
-        channel="email",
-        config={"to_address": invitation.email},
-        subject=f"You've been invited to join {org.name} on RelayHub",
-        message=(
-            f"You've been invited to join {org.name} on RelayHub as {invitation.role}. "
-            f"This invitation expires in {settings.INVITATION_TOKEN_EXPIRE_DAYS} days.\n\n"
-            f"{accept_link}"
-        ),
-    )
+    try:
+        await notification_dispatcher.send(
+            channel="email",
+            config={"to_address": invitation.email},
+            subject=f"You've been invited to join {org.name} on RelayHub",
+            message=(
+                f"You've been invited to join {org.name} on RelayHub as {invitation.role}. "
+                f"This invitation expires in {settings.INVITATION_TOKEN_EXPIRE_DAYS} days.\n\n"
+                f"{accept_link}"
+            ),
+        )
+    except Exception:  # noqa: BLE001 - email delivery failure must never propagate to the caller
+        logger.exception(
+            "invitations: failed to resend invite email for invitation=%s (org=%s) -- "
+            "the reissued token is already durably committed and usable via its link",
+            invitation.id, organization_id,
+        )
 
     return invitation
