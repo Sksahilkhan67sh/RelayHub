@@ -1,0 +1,64 @@
+name: Publish Python SDK to PyPI
+
+# Manual trigger only, deliberately -- same "review before publish" posture as
+# the Java SDK's autoPublish=false (see sdks/java/pom.xml). Nothing publishes
+# just because someone pushed to main; a human has to come to the Actions tab
+# and click "Run workflow".
+#
+# Uses PyPI Trusted Publishing (OIDC) instead of a stored API token: PyPI
+# verifies this exact repo + workflow filename + environment via a short-lived
+# token GitHub issues at run time, so there is no secret to leak, rotate, or
+# accidentally commit. One-time setup required on PyPI's side -- see
+# docs/self-hosting/README.md or the PR description for the exact steps.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_version:
+        description: "Version in sdks/python/pyproject.toml you expect to publish (safety check -- the run fails if it doesn't match)"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: pypi
+    # Required for PyPI Trusted Publishing's OIDC token exchange -- without
+    # this the job has no way to prove its identity to PyPI.
+    permissions:
+      id-token: write
+    defaults:
+      run:
+        working-directory: sdks/python
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify the version being published matches what was confirmed
+        run: |
+          actual=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          if [ "$actual" != "${{ github.event.inputs.confirm_version }}" ]; then
+            echo "::error::pyproject.toml has version '$actual' but you confirmed '${{ github.event.inputs.confirm_version }}' -- stopping so nothing publishes by accident."
+            exit 1
+          fi
+          echo "Publishing relayhub $actual"
+
+      - name: Install build tooling
+        run: pip install --upgrade pip build twine
+
+      - name: Build sdist + wheel
+        run: |
+          rm -rf dist build ./*.egg-info
+          python -m build
+
+      - name: Validate package metadata/README rendering
+        run: twine check dist/*
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: sdks/python/dist
