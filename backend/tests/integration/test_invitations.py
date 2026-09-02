@@ -383,3 +383,41 @@ async def test_accepting_invitation_notifies_new_member_and_admins(client, uniqu
 
     owner_notifs = await client.get("/v1/notifications", headers={"Authorization": f"Bearer {owner_token}"})
     assert any(n["type"] == "member.joined" for n in owner_notifs.json())
+
+
+@pytest.mark.asyncio
+async def test_create_invitation_succeeds_even_if_email_delivery_fails(client, unique_email):
+    """Regression test: the invitation row commits before the email send is
+    attempted, so a delivery failure (e.g. RESEND_API_KEY unset, or the provider
+    being down) must not turn an already-successful invite into a 500 -- and
+    especially must not leave it in a state where the client's natural retry then
+    hits 'already pending' (409), making a genuinely successful invite look
+    permanently broken."""
+    owner_token = await register_and_get_token(client, unique_email)
+    client.fake_notifications.fail_channels.add("email")
+
+    resp = await client.post(
+        "/v1/org/invitations", json={"email": f"invitee-{unique_email}", "role": "member"},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["status"] == "pending"
+
+    list_resp = await client.get("/v1/org/invitations", headers={"Authorization": f"Bearer {owner_token}"})
+    assert any(inv["email"] == f"invitee-{unique_email}" for inv in list_resp.json())
+
+
+@pytest.mark.asyncio
+async def test_resend_invitation_succeeds_even_if_email_delivery_fails(client, unique_email):
+    owner_token = await register_and_get_token(client, unique_email)
+    create_resp = await client.post(
+        "/v1/org/invitations", json={"email": f"invitee-{unique_email}", "role": "member"},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    invitation_id = create_resp.json()["id"]
+
+    client.fake_notifications.fail_channels.add("email")
+    resend_resp = await client.post(
+        f"/v1/org/invitations/{invitation_id}/resend", headers={"Authorization": f"Bearer {owner_token}"}
+    )
+    assert resend_resp.status_code == 200, resend_resp.text

@@ -28,6 +28,22 @@ async def test_forgot_password_unknown_email_same_response_no_email_sent(client,
     assert client.fake_notifications.sent == []
 
 
+@pytest.mark.asyncio
+async def test_forgot_password_existing_email_same_response_even_if_email_delivery_fails(client, unique_email):
+    """Regression test: this endpoint's whole contract is responding identically
+    whether or not the account exists, to prevent enumeration. The reset token
+    commits before the email send is attempted -- a delivery failure must not
+    turn a real, active user's request into a 500 while a nonexistent email
+    stays a silent 200, which would itself be an enumeration side-channel
+    through the response status."""
+    await register_and_get_token(client, unique_email)
+    client.fake_notifications.fail_channels.add("email")
+
+    resp = await client.post("/v1/auth/forgot-password", json={"email": unique_email})
+    assert resp.status_code == 200
+    assert "message" in resp.json()
+
+
 def _extract_reset_token(sent_message: str) -> str:
     return sent_message.split("token=")[1].split()[0].strip()
 
