@@ -187,6 +187,81 @@ async def test_sms_channel_raises_architecture_hook_error():
 
 
 @pytest.mark.asyncio
+async def test_email_channel_requires_resend_api_key(monkeypatch):
+    from app.common.notification_client import RealNotificationDispatcher
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "RESEND_API_KEY", "")
+    dispatcher = RealNotificationDispatcher()
+    with pytest.raises(NotificationDeliveryError, match="RESEND_API_KEY"):
+        await dispatcher.send(channel="email", config={"to_address": "x@example.com"}, subject="s", message="m")
+
+
+@pytest.mark.asyncio
+async def test_email_channel_requires_to_address(monkeypatch):
+    from app.common.notification_client import RealNotificationDispatcher
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "RESEND_API_KEY", "re_test_key")
+    dispatcher = RealNotificationDispatcher()
+    with pytest.raises(NotificationDeliveryError, match="to_address"):
+        await dispatcher.send(channel="email", config={}, subject="s", message="m")
+
+
+@pytest.mark.asyncio
+async def test_email_channel_sends_via_resend_api(monkeypatch):
+    """Regression test for the SMTP -> Resend HTTP API migration: production
+    stopped sending email entirely because Render's network blocks outbound
+    SMTP ports (OSError: Network is unreachable), no matter how correct the
+    SMTP credentials were. This confirms the real dispatcher now hits the
+    documented Resend endpoint/payload shape instead."""
+    from app.common.notification_client import RealNotificationDispatcher
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "RESEND_API_KEY", "re_test_key")
+    monkeypatch.setattr(settings, "EMAIL_FROM_ADDRESS", "RelayHub <alerts@relayhub.dev>")
+
+    captured = {}
+
+    async def fake_post(self, url, *, headers=None, json=None, timeout=None):
+        captured["url"] = url
+        captured["headers"] = headers
+        captured["json"] = json
+        return httpx.Response(200, json={"id": "fake-email-id"})
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    dispatcher = RealNotificationDispatcher()
+    await dispatcher.send(channel="email", config={"to_address": "user@example.com"}, subject="Reset your password", message="Click here")
+
+    assert captured["url"] == "https://api.resend.com/emails"
+    assert captured["headers"]["Authorization"] == "Bearer re_test_key"
+    assert captured["json"] == {
+        "from": "RelayHub <alerts@relayhub.dev>",
+        "to": ["user@example.com"],
+        "subject": "Reset your password",
+        "text": "Click here",
+    }
+
+
+@pytest.mark.asyncio
+async def test_email_channel_raises_on_resend_error_response(monkeypatch):
+    from app.common.notification_client import RealNotificationDispatcher
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "RESEND_API_KEY", "re_test_key")
+
+    async def fake_post(self, url, *, headers=None, json=None, timeout=None):
+        return httpx.Response(422, json={"message": "Invalid `to` field"})
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    dispatcher = RealNotificationDispatcher()
+    with pytest.raises(NotificationDeliveryError, match="422"):
+        await dispatcher.send(channel="email", config={"to_address": "user@example.com"}, subject="s", message="m")
+
+
+@pytest.mark.asyncio
 async def test_test_alert_action_bypasses_throttle_and_reports_status(client, unique_email):
     token = await register_and_get_token(client, unique_email)
     create_resp = await client.post(
