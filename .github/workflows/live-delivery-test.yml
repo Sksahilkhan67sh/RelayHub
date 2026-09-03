@@ -21,6 +21,11 @@ on:
         description: "Delay between each publish (0 = as fast as possible)"
         required: true
         default: "0"
+      use_existing_account:
+        description: "Log in as sahilkhan67sh@gmail.com instead of registering a throwaway account (requires the RELAYHUB_TEST_ACCOUNT_PASSWORD repo secret)"
+        type: boolean
+        required: true
+        default: false
 
 permissions:
   contents: read
@@ -42,6 +47,7 @@ jobs:
 
       - name: Register a throwaway test account
         id: register
+        if: ${{ github.event.inputs.use_existing_account != 'true' }}
         run: |
           suffix=$(date +%s)-$RANDOM
           email="livetest-${suffix}@example.com"
@@ -53,11 +59,38 @@ jobs:
           echo "token=$token" >> "$GITHUB_OUTPUT"
           echo "Registered $email"
 
+      - name: Log in as the real test account
+        id: login
+        if: ${{ github.event.inputs.use_existing_account == 'true' }}
+        env:
+          # A repo secret, not a workflow input -- inputs are visible in the run's
+          # metadata even when the trigger came from the API; secrets never are.
+          RELAYHUB_TEST_ACCOUNT_PASSWORD: ${{ secrets.RELAYHUB_TEST_ACCOUNT_PASSWORD }}
+        run: |
+          if [ -z "$RELAYHUB_TEST_ACCOUNT_PASSWORD" ]; then
+            echo "::error::RELAYHUB_TEST_ACCOUNT_PASSWORD repo secret is not set -- add it under Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+          resp=$(curl -sS -X POST https://relayhub-backend.onrender.com/v1/auth/login \
+            -H "Content-Type: application/json" \
+            --data-binary @<(python3 .github/scripts/build_login_payload.py))
+          token=$(echo "$resp" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('access_token','ERROR: '+str(d)))")
+          echo "::add-mask::$token"
+          echo "token=$token" >> "$GITHUB_OUTPUT"
+          echo "Logged in as sahilkhan67sh@gmail.com"
+
+      - name: Resolve auth token
+        id: auth
+        run: |
+          token="${{ steps.register.outputs.token }}${{ steps.login.outputs.token }}"
+          echo "::add-mask::$token"
+          echo "token=$token" >> "$GITHUB_OUTPUT"
+
       - name: Create a test endpoint pointing at the webhook.site inbox
         id: endpoint
         run: |
           resp=$(curl -sS -X POST https://relayhub-backend.onrender.com/v1/endpoints \
-            -H "Authorization: Bearer ${{ steps.register.outputs.token }}" \
+            -H "Authorization: Bearer ${{ steps.auth.outputs.token }}" \
             -H "Content-Type: application/json" \
             -d "{\"name\":\"Live test sink\",\"url\":\"${{ steps.sink.outputs.url }}\",\"environment\":\"test\"}")
           id=$(echo "$resp" | python3 -c "import json,sys; print(json.load(sys.stdin)['id'])")
@@ -68,7 +101,7 @@ jobs:
         id: apikey
         run: |
           resp=$(curl -sS -X POST https://relayhub-backend.onrender.com/v1/api-keys \
-            -H "Authorization: Bearer ${{ steps.register.outputs.token }}" \
+            -H "Authorization: Bearer ${{ steps.auth.outputs.token }}" \
             -H "Content-Type: application/json" \
             -d '{"name":"Live test key","environment":"test"}')
           key=$(echo "$resp" | python3 -c "import json,sys; print(json.load(sys.stdin)['key'])")
@@ -101,7 +134,7 @@ jobs:
           : > /tmp/deliveries.jsonl
           while read -r event_id; do
             curl -sS "https://relayhub-backend.onrender.com/v1/deliveries/by-event/${event_id}" \
-              -H "Authorization: Bearer ${{ steps.register.outputs.token }}" >> /tmp/deliveries.jsonl
+              -H "Authorization: Bearer ${{ steps.auth.outputs.token }}" >> /tmp/deliveries.jsonl
             echo "" >> /tmp/deliveries.jsonl
           done < /tmp/event_ids.txt
           python3 .github/scripts/report_delivery_status.py /tmp/deliveries.jsonl
