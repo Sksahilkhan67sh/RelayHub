@@ -1,0 +1,109 @@
+name: Live Delivery Test
+
+# Runs a real end-to-end test against the LIVE production API
+# (https://relayhub-backend.onrender.com) -- registers its own throwaway test
+# account + org (so it never touches any real org's data), creates a TEST-
+# environment endpoint pointing at a fresh webhook.site inbox, publishes N
+# events, then polls each one's delivery status until they settle.
+#
+# Exists because the sandbox this was set up from cannot reach
+# relayhub-backend.onrender.com at all (network egress policy) -- GitHub's
+# runners have no such restriction, so this is where the actual HTTP calls
+# happen instead. Manual trigger only.
+on:
+  workflow_dispatch:
+    inputs:
+      count:
+        description: "How many events to publish"
+        required: true
+        default: "10"
+      delay_seconds:
+        description: "Delay between each publish (0 = as fast as possible)"
+        required: true
+        default: "0"
+
+permissions:
+  contents: read
+
+jobs:
+  live-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create a fresh webhook.site inbox
+        id: sink
+        run: |
+          resp=$(curl -sS -X POST https://webhook.site/token)
+          token=$(echo "$resp" | python3 -c "import json,sys; print(json.load(sys.stdin)['uuid'])")
+          echo "url=https://webhook.site/$token" >> "$GITHUB_OUTPUT"
+          echo "view=https://webhook.site/#!/view/$token" >> "$GITHUB_OUTPUT"
+          echo "Inbox: https://webhook.site/#!/view/$token"
+
+      - name: Register a throwaway test account
+        id: register
+        run: |
+          suffix=$(date +%s)-$RANDOM
+          email="livetest-${suffix}@example.com"
+          resp=$(curl -sS -X POST https://relayhub-backend.onrender.com/v1/auth/register \
+            -H "Content-Type: application/json" \
+            -d "{\"email\":\"${email}\",\"password\":\"LiveTestPass123\",\"full_name\":\"Live Test\",\"organization_name\":\"live-test-${suffix}\"}")
+          token=$(echo "$resp" | python3 -c "import json,sys; print(json.load(sys.stdin)['access_token'])")
+          echo "::add-mask::$token"
+          echo "token=$token" >> "$GITHUB_OUTPUT"
+          echo "Registered $email"
+
+      - name: Create a test endpoint pointing at the webhook.site inbox
+        id: endpoint
+        run: |
+          resp=$(curl -sS -X POST https://relayhub-backend.onrender.com/v1/endpoints \
+            -H "Authorization: Bearer ${{ steps.register.outputs.token }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"name\":\"Live test sink\",\"url\":\"${{ steps.sink.outputs.url }}\",\"environment\":\"test\"}")
+          id=$(echo "$resp" | python3 -c "import json,sys; print(json.load(sys.stdin)['id'])")
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+          echo "Endpoint: $id -> ${{ steps.sink.outputs.url }}"
+
+      - name: Create a test API key
+        id: apikey
+        run: |
+          resp=$(curl -sS -X POST https://relayhub-backend.onrender.com/v1/api-keys \
+            -H "Authorization: Bearer ${{ steps.register.outputs.token }}" \
+            -H "Content-Type: application/json" \
+            -d '{"name":"Live test key","environment":"test"}')
+          key=$(echo "$resp" | python3 -c "import json,sys; print(json.load(sys.stdin)['key'])")
+          echo "::add-mask::$key"
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+          echo "API key created"
+
+      - name: Publish events
+        id: publish
+        run: |
+          : > /tmp/event_ids.txt
+          for i in $(seq 1 "${{ github.event.inputs.count }}"); do
+            resp=$(curl -sS -X POST https://relayhub-backend.onrender.com/v1/events \
+              -H "X-RelayHub-Api-Key: ${{ steps.apikey.outputs.key }}" \
+              -H "Content-Type: application/json" \
+              -d "{\"event\":\"livetest.ping\",\"payload\":{\"i\":$i},\"environment\":\"test\"}")
+            id=$(echo "$resp" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('id','ERROR: '+str(d)))")
+            echo "  [$i] event $id"
+            echo "$id" >> /tmp/event_ids.txt
+            if [ "${{ github.event.inputs.delay_seconds }}" != "0" ]; then
+              sleep "${{ github.event.inputs.delay_seconds }}"
+            fi
+          done
+          echo "Published ${{ github.event.inputs.count }} events."
+
+      - name: Wait, then report delivery status for every event published
+        run: |
+          echo "Waiting 20s for the worker to process deliveries..."
+          sleep 20
+          : > /tmp/deliveries.jsonl
+          while read -r event_id; do
+            curl -sS "https://relayhub-backend.onrender.com/v1/deliveries/by-event/${event_id}" \
+              -H "Authorization: Bearer ${{ steps.register.outputs.token }}" >> /tmp/deliveries.jsonl
+            echo "" >> /tmp/deliveries.jsonl
+          done < /tmp/event_ids.txt
+          python3 .github/scripts/report_delivery_status.py /tmp/deliveries.jsonl
+          echo ""
+          echo "Inbox to inspect visually: ${{ steps.sink.outputs.view }}"
