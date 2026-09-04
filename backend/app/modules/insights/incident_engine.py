@@ -147,7 +147,7 @@ def _confidence_of(severity: str) -> float:
 
 
 async def evaluate_incident_recovery(
-    db: AsyncSession, *, incident: Incident, current_window_metrics: WindowMetrics, current_health_status: str, observed_at: datetime
+    db: AsyncSession, *, incident: Incident, current_health_status: str, observed_at: datetime
 ) -> None:
     """Called once per window for every non-terminal incident's endpoint (see
     workers/insight_tasks.py), independent of whether new anomalies fired this

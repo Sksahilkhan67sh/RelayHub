@@ -3,7 +3,7 @@
 import React, { useEffect, useState, type FormEvent } from "react";
 import { Zap, Send, ChevronDown, ChevronUp } from "lucide-react";
 import { api, apiFetch, ApiError } from "@/lib/api-client";
-import type { EventOut, EndpointOut } from "@/lib/types";
+import type { EventOut, EndpointOut, DeliveryJobOut } from "@/lib/types";
 import { BUILT_IN_EVENT_TYPES } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,6 +29,8 @@ export default function EventsPage() {
   const [error, setError] = useState<string | null>(null);
   const [testerOpen, setTesterOpen] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [deliveryDetail, setDeliveryDetail] = useState<Record<string, DeliveryJobOut[]>>({});
+  const [deliveryDetailLoading, setDeliveryDetailLoading] = useState<string | null>(null);
 
   async function load() {
     try {
@@ -42,6 +44,30 @@ export default function EventsPage() {
   useEffect(() => {
     load();
   }, []);
+
+  async function handleExpand(eventId: string) {
+    if (expandedId === eventId) {
+      setExpandedId(null);
+      return;
+    }
+    setExpandedId(eventId);
+    // The list response's delivery_jobs only carries {id, endpoint_id, status} --
+    // fetch the full per-attempt breakdown (timing, HTTP status, error detail) on
+    // demand rather than for every row up front, and cache it per event so
+    // re-expanding the same row doesn't refetch.
+    if (!deliveryDetail[eventId]) {
+      setDeliveryDetailLoading(eventId);
+      try {
+        const jobs = await api.get<DeliveryJobOut[]>(`/v1/deliveries/by-event/${eventId}`);
+        setDeliveryDetail((prev) => ({ ...prev, [eventId]: jobs }));
+      } catch {
+        // Non-fatal: the row still shows the summary status dots from the list
+        // response even if this richer fetch fails.
+      } finally {
+        setDeliveryDetailLoading(null);
+      }
+    }
+  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -82,7 +108,7 @@ export default function EventsPage() {
                 return (
                   <React.Fragment key={ev.id}>
                     <tr
-                      onClick={() => setExpandedId(expandedId === ev.id ? null : ev.id)}
+                      onClick={() => handleExpand(ev.id)}
                       className="cursor-pointer border-b border-graphite-50 last:border-0 hover:bg-graphite-50 dark:border-graphite-800/60 dark:hover:bg-graphite-800/40"
                     >
                       <td className="px-4 py-2.5 font-mono text-graphite-950 dark:text-graphite-50">{ev.event}</td>
@@ -107,16 +133,11 @@ export default function EventsPage() {
                       <tr className="border-b border-graphite-50 bg-graphite-50 dark:border-graphite-800/60 dark:bg-graphite-800/30">
                         <td colSpan={4} className="px-4 py-3">
                           {ev.delivery_jobs.length > 0 && (
-                            <div className="mb-3 flex flex-col gap-1">
-                              <span className="text-[11px] font-medium text-graphite-500">Per-endpoint deliveries</span>
-                              {ev.delivery_jobs.map((j) => (
-                                <div key={j.id} className="flex items-center gap-2 font-mono text-[11px] text-graphite-600 dark:text-graphite-400">
-                                  <StatusDot color={statusToSignalColor(j.status)} />
-                                  endpoint {j.endpoint_id.slice(0, 8)}…
-                                  <span className="text-graphite-400">{j.status}</span>
-                                </div>
-                              ))}
-                            </div>
+                            <PerEndpointDeliveries
+                              summaryJobs={ev.delivery_jobs}
+                              detailedJobs={deliveryDetail[ev.id]}
+                              loading={deliveryDetailLoading === ev.id}
+                            />
                           )}
                           <span className="mb-1 block text-[11px] font-medium text-graphite-500">Payload</span>
                           <pre className="overflow-x-auto font-mono text-[11px] text-graphite-700 dark:text-graphite-300">
@@ -132,6 +153,56 @@ export default function EventsPage() {
           </table>
         )}
       </Card>
+    </div>
+  );
+}
+
+function PerEndpointDeliveries({
+  summaryJobs,
+  detailedJobs,
+  loading,
+}: {
+  summaryJobs: EventOut["delivery_jobs"];
+  detailedJobs: DeliveryJobOut[] | undefined;
+  loading: boolean;
+}) {
+  return (
+    <div className="mb-3 flex flex-col gap-2">
+      <span className="text-[11px] font-medium text-graphite-500">Per-endpoint deliveries</span>
+      {loading ? (
+        <span className="text-[11px] text-graphite-400">Loading attempt detail…</span>
+      ) : detailedJobs ? (
+        detailedJobs.map((job) => {
+          const lastAttempt = job.attempts[job.attempts.length - 1];
+          return (
+            <div key={job.id} className="flex flex-col gap-0.5 rounded border border-graphite-100 px-2 py-1.5 dark:border-graphite-800">
+              <div className="flex items-center gap-2 font-mono text-[11px] text-graphite-600 dark:text-graphite-400">
+                <StatusDot color={statusToSignalColor(job.status)} />
+                endpoint {job.endpoint_id.slice(0, 8)}…
+                <span className="text-graphite-400">
+                  {job.status} · attempt {job.attempt_number}/{job.max_attempts}
+                </span>
+              </div>
+              {lastAttempt && (
+                <div className="pl-5 text-[11px] text-graphite-500">
+                  Last attempt: {lastAttempt.http_status ?? "no response"} · {lastAttempt.duration_ms}ms
+                  {lastAttempt.error_message ? ` · ${lastAttempt.error_message}` : ""}
+                </div>
+              )}
+            </div>
+          );
+        })
+      ) : (
+        // Detail fetch hasn't resolved (or failed) yet -- fall back to the
+        // {id, endpoint_id, status} already in the events list response.
+        summaryJobs.map((j) => (
+          <div key={j.id} className="flex items-center gap-2 font-mono text-[11px] text-graphite-600 dark:text-graphite-400">
+            <StatusDot color={statusToSignalColor(j.status)} />
+            endpoint {j.endpoint_id.slice(0, 8)}…
+            <span className="text-graphite-400">{j.status}</span>
+          </div>
+        ))
+      )}
     </div>
   );
 }

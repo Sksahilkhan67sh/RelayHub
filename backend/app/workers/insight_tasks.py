@@ -29,7 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.core.config import settings
 from app.core.tracing import get_tracer
 from app.modules.endpoints.models import Endpoint
-from app.modules.insights.aggregation import WindowMetrics, compute_endpoint_window_metrics
+from app.modules.insights.aggregation import compute_endpoint_window_metrics
 from app.modules.insights.ai.provider import AIProvider, get_ai_provider
 from app.modules.insights.ai.service import AIAnalysisOutcome, ai_result_to_rca_fields, analyze_incident
 from app.modules.insights.anomaly_detection import detect_anomalies
@@ -119,7 +119,7 @@ async def analyze_endpoint(
     db.add(snapshot)
 
     if not current.has_sufficient_data():
-        await _evaluate_recovery_for_endpoint(db, endpoint_id=endpoint_id, metrics=current, health_status=health["status"], observed_at=now)
+        await _evaluate_recovery_for_endpoint(db, endpoint_id=endpoint_id, health_status=health["status"], observed_at=now)
         await db.commit()
         return "insufficient_data"
 
@@ -152,14 +152,14 @@ async def analyze_endpoint(
                 ai_fields = {k: v for k, v in ai_result_to_rca_fields(outcome).items() if k != "source"}
                 await _upsert_rca(db, incident=incident, organization_id=organization_id, source="ai", fields=ai_fields)
 
-    await _evaluate_recovery_for_endpoint(db, endpoint_id=endpoint_id, metrics=current, health_status=health["status"], observed_at=now)
+    await _evaluate_recovery_for_endpoint(db, endpoint_id=endpoint_id, health_status=health["status"], observed_at=now)
 
     await db.commit()
     return "analyzed"
 
 
 async def _evaluate_recovery_for_endpoint(
-    db: AsyncSession, *, endpoint_id: uuid.UUID, metrics: WindowMetrics, health_status: str, observed_at: datetime
+    db: AsyncSession, *, endpoint_id: uuid.UUID, health_status: str, observed_at: datetime
 ) -> None:
     """Runs recovery evaluation for every non-terminal incident on this endpoint,
     independent of whether new anomalies fired this pass -- a quiet, healthy
@@ -169,9 +169,7 @@ async def _evaluate_recovery_for_endpoint(
     )
     incidents = (await db.execute(query)).scalars().all()
     for incident in incidents:
-        await evaluate_incident_recovery(
-            db, incident=incident, current_window_metrics=metrics, current_health_status=health_status, observed_at=observed_at
-        )
+        await evaluate_incident_recovery(db, incident=incident, current_health_status=health_status, observed_at=observed_at)
 
 
 async def _run_analyze_endpoint(endpoint_id: uuid.UUID, organization_id: uuid.UUID) -> None:

@@ -44,7 +44,7 @@ export default function DashboardPage() {
       // /v1/insights is an alias of /v1/analytics -- see the note above and
       // backend/app/modules/analytics/routes.py's module docstring.
       const resp = await fetch(
-        `${API_BASE_URL}/v1/insights/export?report=${report}&granularity=${granularityFor(range)}${dateParams}`,
+        `${API_BASE_URL}/v1/analytics/export?report=${report}&granularity=${granularityFor(range)}${dateParams}`,
         { headers: token ? { Authorization: `Bearer ${token}` } : {} }
       );
       if (!resp.ok) {
@@ -86,9 +86,9 @@ export default function DashboardPage() {
           // dashboard specifically to avoid ad-blocker filter lists that match
           // "analytics" in request URLs -- see
           // backend/app/modules/analytics/routes.py's module docstring.
-          api.get<AnalyticsSummary>(`/v1/insights/summary${dateParams ? `?${dateParams}` : ""}`),
-          api.get<TimeSeriesBucket[]>(`/v1/insights/deliveries-over-time?granularity=${granularity}${sep}${dateParams}`),
-          api.get<TopEndpoint[]>(`/v1/insights/top-endpoints?limit=5${sep}${dateParams}`),
+          api.get<AnalyticsSummary>(`/v1/analytics/summary${dateParams ? `?${dateParams}` : ""}`),
+          api.get<TimeSeriesBucket[]>(`/v1/analytics/deliveries-over-time?granularity=${granularity}${sep}${dateParams}`),
+          api.get<TopEndpoint[]>(`/v1/analytics/top-endpoints?limit=5${sep}${dateParams}`),
           api.get<UsageSummary>("/v1/billing/usage"),
         ]);
         if (cancelled) return;
