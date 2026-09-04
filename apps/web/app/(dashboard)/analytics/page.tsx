@@ -22,9 +22,9 @@ export default function AnalyticsPage() {
     // blocking this page's own first-party requests for some users
     // (net::ERR_BLOCKED_BY_CLIENT) before they ever reached the server.
     Promise.all([
-      api.get<AnalyticsSummary>("/v1/insights/summary"),
-      api.get<EventTypeVolume[]>("/v1/insights/events-by-type"),
-      api.get<EndpointHealthOut[]>("/v1/insights/endpoint-health"),
+      api.get<AnalyticsSummary>("/v1/analytics/summary"),
+      api.get<EventTypeVolume[]>("/v1/analytics/events-by-type"),
+      api.get<EndpointHealthOut[]>("/v1/analytics/endpoint-health"),
     ])
       .then(([s, t, h]) => {
         setSummary(s);

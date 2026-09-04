@@ -3,8 +3,9 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, RotateCw, Ban, Play, Copy, Check, Send, Trash2 } from "lucide-react";
+import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { api, ApiError } from "@/lib/api-client";
-import type { EndpointOut, EndpointSecretOut, DeliveryLogEntryOut } from "@/lib/types";
+import type { EndpointOut, EndpointSecretOut, DeliveryLogEntryOut, EndpointHealthSnapshotOut } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardBody, Badge } from "@/components/ui/card";
 import { Modal } from "@/components/ui/modal";
@@ -17,6 +18,7 @@ export default function EndpointDetailPage() {
   const router = useRouter();
   const [endpoint, setEndpoint] = useState<EndpointOut | null>(null);
   const [deliveries, setDeliveries] = useState<DeliveryLogEntryOut[] | null>(null);
+  const [healthHistory, setHealthHistory] = useState<EndpointHealthSnapshotOut[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [rotatedSecret, setRotatedSecret] = useState<EndpointSecretOut | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -24,12 +26,14 @@ export default function EndpointDetailPage() {
 
   async function load() {
     try {
-      const [ep, logs] = await Promise.all([
+      const [ep, logs, history] = await Promise.all([
         api.get<EndpointOut>(`/v1/endpoints/${params.id}`),
         api.get<DeliveryLogEntryOut[]>(`/v1/logs?endpoint_id=${params.id}&limit=10`),
+        api.get<EndpointHealthSnapshotOut[]>(`/v1/insights/intelligence/health/${params.id}/history?limit=50`),
       ]);
       setEndpoint(ep);
       setDeliveries(logs);
+      setHealthHistory(history);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to load endpoint");
     }
@@ -152,6 +156,45 @@ export default function EndpointDetailPage() {
           <span className="tabular text-sm font-medium">{avgLatency != null ? `${Math.round(avgLatency)}ms` : "—"}</span>
         </StatCard>
       </div>
+
+      <Card>
+        <CardHeader>
+          <h2 className="text-xs font-medium text-graphite-700 dark:text-graphite-200">Health over time</h2>
+        </CardHeader>
+        <CardBody>
+          {!healthHistory || healthHistory.length === 0 ? (
+            <div className="p-6 text-center text-xs text-graphite-500">
+              Not enough delivery history yet to chart health over time.
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={180}>
+              <AreaChart data={[...healthHistory].reverse()}>
+                <defs>
+                  <linearGradient id="healthFill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#C17F2B" stopOpacity={0.25} />
+                    <stop offset="100%" stopColor="#C17F2B" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#E7E9EC" vertical={false} />
+                <XAxis
+                  dataKey="window_start"
+                  tick={{ fontSize: 11, fill: "#8A9099" }}
+                  tickFormatter={(v: string) => new Date(v).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                  axisLine={{ stroke: "#E7E9EC" }}
+                  tickLine={false}
+                />
+                <YAxis domain={[0, 100]} tick={{ fontSize: 11, fill: "#8A9099" }} axisLine={false} tickLine={false} width={30} />
+                <Tooltip
+                  contentStyle={{ fontSize: 12, borderRadius: 6, border: "1px solid #E7E9EC" }}
+                  labelFormatter={(v: string) => new Date(v).toLocaleString()}
+                  formatter={(value: number) => [value != null ? value.toFixed(0) : "—", "Health score"]}
+                />
+                <Area type="monotone" dataKey="health_score" stroke="#C17F2B" fill="url(#healthFill)" strokeWidth={1.5} connectNulls />
+              </AreaChart>
+            </ResponsiveContainer>
+          )}
+        </CardBody>
+      </Card>
 
       <Card>
         <CardHeader>

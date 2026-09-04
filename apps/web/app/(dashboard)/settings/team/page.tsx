@@ -498,6 +498,7 @@ function PaginationFooter({ offset, count, total, onPrev, onNext }: { offset: nu
 }
 
 function InviteMemberModal({ open, onClose, onInvited }: { open: boolean; onClose: () => void; onInvited: () => void }) {
+  const [mode, setMode] = useState<"invite" | "add_existing">("invite");
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("member");
   const [error, setError] = useState<string | null>(null);
@@ -508,26 +509,57 @@ function InviteMemberModal({ open, onClose, onInvited }: { open: boolean; onClos
     setError(null);
     setLoading(true);
     try {
-      await api.post("/v1/org/invitations", { email, role });
+      if (mode === "invite") {
+        await api.post("/v1/org/invitations", { email, role });
+      } else {
+        // For someone who already has a RelayHub account elsewhere -- grants
+        // access immediately, with no separate accept-invite step for them
+        // to complete (unlike the email-invite path above).
+        await api.post("/v1/org/members", { email, role });
+      }
       setEmail("");
       onInvited();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Failed to send invitation");
+      setError(err instanceof ApiError ? err.message : mode === "invite" ? "Failed to send invitation" : "Failed to add member");
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <Modal open={open} onClose={onClose} title="Invite member">
+    <Modal open={open} onClose={onClose} title={mode === "invite" ? "Invite member" : "Add existing user"}>
       <form onSubmit={handleSubmit} className="flex flex-col gap-3">
+        <div className="flex gap-1 rounded-md bg-graphite-100 p-1 text-xs dark:bg-graphite-800">
+          <button
+            type="button"
+            onClick={() => setMode("invite")}
+            className={`flex-1 rounded px-2 py-1.5 font-medium transition-colors ${
+              mode === "invite" ? "bg-white text-graphite-950 shadow-sm dark:bg-graphite-950 dark:text-graphite-50" : "text-graphite-600 dark:text-graphite-400"
+            }`}
+          >
+            Send email invite
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode("add_existing")}
+            className={`flex-1 rounded px-2 py-1.5 font-medium transition-colors ${
+              mode === "add_existing" ? "bg-white text-graphite-950 shadow-sm dark:bg-graphite-950 dark:text-graphite-50" : "text-graphite-600 dark:text-graphite-400"
+            }`}
+          >
+            Add existing user
+          </button>
+        </div>
         <Input
           label="Email"
           type="email"
           required
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          hint="They'll get an email with a link to join -- no existing account required."
+          hint={
+            mode === "invite"
+              ? "They'll get an email with a link to join -- no existing account required."
+              : "They must already have a RelayHub account with this email. Access is granted immediately, with nothing for them to accept."
+          }
         />
         <div className="flex flex-col gap-1.5">
           <label className="text-xs font-medium text-graphite-700 dark:text-graphite-200">Role</label>
@@ -545,7 +577,7 @@ function InviteMemberModal({ open, onClose, onInvited }: { open: boolean; onClos
             Cancel
           </Button>
           <Button type="submit" size="sm" loading={loading}>
-            Send invitation
+            {mode === "invite" ? "Send invitation" : "Add member"}
           </Button>
         </div>
       </form>
