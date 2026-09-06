@@ -32,7 +32,7 @@ export class AuthResource {
 
   /**
    * POST /v1/auth/forgot-password -- always returns the same generic message
-   * whether or not the email is registered, by design (see PHASE_A_REPORT.md).
+   * whether or not the email is registered, by design (see docs/history/PHASE_A_REPORT.md).
    */
   forgotPassword(params: { email: string }, options?: RequestOptions) {
     return this.transport.request<{ message: string }>("POST", "/v1/auth/forgot-password", params, options);
