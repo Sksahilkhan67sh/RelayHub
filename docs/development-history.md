@@ -5,8 +5,8 @@
 > release cleanup so the root README could be a clean, product-facing
 > document. Nothing here was rewritten -- it's the original log, kept for
 > historical reference. For the current, up-to-date state of the project, see
-> `README.md`, `docs/architecture/README.md`, and `PHASE_A_REPORT.md` through
-> `PHASE_E_REPORT.md`.
+> `README.md`, `docs/architecture/README.md`, and `docs/history/PHASE_A_REPORT.md` through
+> `docs/history/PHASE_E_REPORT.md`.
 
 ## Completed
 

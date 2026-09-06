@@ -60,7 +60,7 @@ curl https://api.relayhub.dev/v1/auth/me -H "Authorization: Bearer $TOKEN"
 - **Auth:** none
 - **Rate limit:** IP-based, 5 requests / hour
 - **Body:** `{ "email": string }`
-- **Response `200`:** `{ "message": string }` -- **always the same generic message**, whether or not the email is registered (deliberate: never confirms account existence). See `PHASE_A_REPORT.md`.
+- **Response `200`:** `{ "message": string }` -- **always the same generic message**, whether or not the email is registered (deliberate: never confirms account existence). See `docs/history/PHASE_A_REPORT.md`.
 - **Side effect:** if the email matches an active account, a one-time, expiring reset link is emailed.
 
 ## POST /auth/reset-password

@@ -7,7 +7,7 @@ from ..types import InvitationOut, InvitationStatus, MemberOut, OrganizationOut,
 
 
 class InvitationsResource:
-    """`organizations.invitations` -- email-based invites (see PHASE_A_REPORT.md)."""
+    """`organizations.invitations` -- email-based invites (see docs/history/PHASE_A_REPORT.md)."""
 
     def __init__(self, transport: Transport) -> None:
         self._transport = transport

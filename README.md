@@ -7,7 +7,7 @@ every subscribed destination endpoint for your organization.
 This README describes the product as it actually exists in this repository.
 For the full build history and phase-by-phase verification detail, see
 [`docs/development-history.md`](docs/development-history.md) and
-`PHASE_A_REPORT.md` through `PHASE_E_REPORT.md`. For a claim-by-claim,
+`docs/history/PHASE_A_REPORT.md` through `docs/history/PHASE_E_REPORT.md`. For a claim-by-claim,
 file-traceable architecture reference, see
 [`docs/architecture/README.md`](docs/architecture/README.md).
 
@@ -61,9 +61,10 @@ file-traceable architecture reference, see
                                                     cleanup_expired_logs)
 ```
 
-No Kafka, no Kubernetes manifests, no Nginx config, and no AI/copilot service
-exist anywhere in this codebase — see `docs/architecture/README.md` for the
-full implemented-vs-planned breakdown.
+No Kafka, no Kubernetes manifests, and no Nginx config exist anywhere in this
+codebase — see `docs/architecture/README.md` for the full implemented-vs-planned
+breakdown. (An AI Gateway + Copilot chat + incident analysis feature does
+exist — see that same doc's "AI layer" section.)
 
 ### Backend stack
 
@@ -140,7 +141,7 @@ fully audited), and immediate rejection on revocation — no caching window.
 | Node.js / TypeScript | ✅ tested (`sdks/node`) |
 | Python | ✅ tested (`sdks/python`) |
 | Go | ✅ tested (`sdks/go`) |
-| Java | ⚠️ written and reviewed against the live API; compilation/test execution has been environment-limited so far in every sandbox this project has been built in (Maven Central unreachable) — see `PHASE_E_REPORT.md` for the exact, current status |
+| Java | ✅ tested — compiles and passes its test suite on GitHub's real CI runner (`.github/workflows/ci.yml`'s `java-sdk` job). Earlier project notes said this was environment-limited because a previous sandbox couldn't reach Maven Central; that was a sandbox limitation, not a real problem, and is resolved by running in CI instead of that sandbox. |
 
 All four cover the same real resource set (auth, API keys, organizations +
 invitations, endpoints, events, deliveries, DLQ, analytics, billing,
@@ -156,14 +157,27 @@ There is no "Projects" resource in the backend, and none of the SDKs invent one.
 
 ### Documentation location
 
-- `docs/architecture/README.md` — implemented-vs-planned architecture reference
+**Start here if you're new:**
+- [`docs/DEVELOPER_GUIDE.md`](docs/DEVELOPER_GUIDE.md) — module-by-module map of the whole repo
+- [`docs/WHERE_TO_MAKE_CHANGES.md`](docs/WHERE_TO_MAKE_CHANGES.md) — "I want to change X" → exact files/tests
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — conventions, PR expectations, how to verify a change
+- [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) — every environment variable, current and accurate
+- [`docs/architecture/README.md`](docs/architecture/README.md) — implemented-vs-planned architecture reference
+- [`docs/architecture/diagrams.md`](docs/architecture/diagrams.md) — Mermaid diagrams for the major flows
+
+**Reference:**
 - `docs/api/` — API reference, one file per backend module
 - `docs/self-hosting/README.md` — deployment/self-hosting guide
 - `docs/webhooks/README.md` — signing, verification, retry, idempotency
 - `docs/sdks/README.md`, `docs/cli/README.md` — SDK/CLI reference
+- `docs/ai/providers.md` — AI provider setup notes
 - `examples/` — runnable examples (event publish, webhook receiver, signature verification)
-- `PHASE_A_REPORT.md` … `PHASE_E_REPORT.md` — build/verification history
-- `RELEASE_CHECKLIST.md` — the full, current verification checklist
+
+**Historical (dated snapshots, not kept current — see `docs/history/README.md`):**
+- `docs/history/PHASE_A_REPORT.md` … `docs/history/PHASE_E_REPORT.md`,
+  `docs/history/RELEASE_CHECKLIST.md` — build/verification history as it
+  stood partway through the project. For the actual current test/lint/typecheck
+  commands and expected results, use `CONTRIBUTING.md` instead.
 
 ## Local development
 
@@ -210,10 +224,11 @@ cp backend/.env.example backend/.env   # fill in real production values
 docker compose -f infra/docker/docker-compose.prod.yml up -d --build
 ```
 
-See `docs/self-hosting/README.md` and `PHASE_E_REPORT.md` §16 for the full
-deployment walkthrough and what must be configured outside this repo (DNS,
-TLS termination, a reverse proxy — intentionally not included here to avoid
-adding infrastructure the existing architecture doesn't call for).
+See `docs/self-hosting/README.md` for the full deployment walkthrough and
+what must be configured outside this repo (DNS, TLS termination, a reverse
+proxy — intentionally not included here to avoid adding infrastructure the
+existing architecture doesn't call for). `docs/history/PHASE_E_REPORT.md` §16
+has the original deployment write-up if you want the historical context.
 
 ## Health checks
 
@@ -226,7 +241,7 @@ adding infrastructure the existing architecture doesn't call for).
 `scripts/backup_db.sh` (`pg_dump --format=custom`) and
 `scripts/restore_db.sh` (`pg_restore --clean --if-exists`), both built around
 the same `DATABASE_URL` the application uses. See the scripts' own comments
-for usage and the current verification status in `PHASE_E_REPORT.md`.
+for usage; see `CONTRIBUTING.md` for how to verify a change to either script.
 
 ## CI/CD
 
@@ -236,10 +251,12 @@ SDKs, the CLI, and a Docker build-validation job on every push/PR to `main`.
 
 ## Testing / verification
 
-See `RELEASE_CHECKLIST.md` for the complete, current test/lint/typecheck
-results across every component, and `PHASE_E_REPORT.md` for what was verified
-live against real infrastructure versus what remains environment-limited in
-the sandbox this project has been built in.
+Current baseline (see `CONTRIBUTING.md` for the exact commands to reproduce
+this): backend 431/431 tests passing, `ruff`/`mypy` clean; frontend `tsc`/
+`next lint` clean; all four SDKs and the CLI passing their own test suites in
+CI. `docs/history/RELEASE_CHECKLIST.md` and `docs/history/PHASE_E_REPORT.md`
+have the original point-in-time verification write-up (186 tests, at the
+time) if you want the historical context — they are not kept current.
 
 ## Security notes
 
@@ -254,8 +271,9 @@ the sandbox this project has been built in.
   Referrer-Policy, Permissions-Policy, HSTS in production) are applied to
   every response
 - Request bodies over 2 MiB are rejected before reaching route handlers
-- See `PHASE_E_REPORT.md` §2 for the full security audit and the one known,
-  still-open item below
+- See `docs/history/PHASE_E_REPORT.md` §2 for the original point-in-time
+  security audit and the one known, still-open item below; see
+  `CONTRIBUTING.md`'s security rules for what's expected of new changes
 
 ## Current limitations
 
@@ -264,17 +282,17 @@ These are real, current gaps — not aspirational "coming soon" items:
 - **Frontend token storage uses `localStorage`, not an httpOnly cookie.**
   Documented tradeoff, not yet hardened into a session/cookie-based flow.
 - **SMS alert channel** is a named constant with no working send path.
-- **OpenTelemetry** (`OTEL_EXPORTER_OTLP_ENDPOINT`) is a configuration
-  placeholder only — no tracing instrumentation exists behind it.
-- **Kubernetes/Nginx/Grafana** configuration directories under `infra/` are
-  empty — not part of the current deployment model, which is Docker Compose.
-- **Java SDK** has not been mechanically compiled/tested in any sandbox this
-  project has been developed in so far (Maven Central has been unreachable in
-  every environment used) — it's written and reviewed against the live API,
-  but unverified.
-- **No AI/copilot feature** exists in this codebase.
+- **OpenTelemetry tracing is real code, inactive by default.**
+  `OTEL_EXPORTER_OTLP_ENDPOINT` genuinely wires an OTLP exporter and
+  `FastAPIInstrumentor` (`backend/app/core/tracing.py`) when set — it's not a
+  dead placeholder, it's just unset in every environment so far.
+- **Kubernetes/Nginx/Grafana** aren't part of the current deployment model —
+  `infra/` contains only `infra/docker/`, no `k8s`/`nginx`/`grafana`
+  directories exist at all (not "empty", just absent).
+- **No AI/copilot feature** — false as of this note; see
+  `docs/architecture/README.md`'s "AI layer" section. Corrected here because
+  this file previously said the opposite.
 
 ## License / project information
 
-No `LICENSE` file is currently present in this repository. Treat the code as
-proprietary/all-rights-reserved unless and until a license file is added.
+Proprietary, all rights reserved — see [`LICENSE`](LICENSE).

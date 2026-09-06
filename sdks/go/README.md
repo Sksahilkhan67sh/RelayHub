@@ -144,7 +144,7 @@ go test ./...
 ```
 
 > This SDK was authored and reviewed without a local Go toolchain available in
-> the environment it was written in -- see `PHASE_D_REPORT.md` for details. Run
+> the environment it was written in -- see `docs/history/PHASE_D_REPORT.md` for details. Run
 > the commands above before relying on it in production.
 
 ## License

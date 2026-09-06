@@ -1,5 +1,13 @@
 # RelayHub — Remaining Work
 
+> **Historical document.** This is a dated, phase-by-phase build log — each
+> entry reflects what was true *at the time it was written*, including
+> "no such module exists" claims about features (AI/Copilot) that were built
+> in later phases not reflected here. For current, verified-against-live-source
+> status, see [`docs/architecture/README.md`](docs/architecture/README.md)
+> instead. This file is kept for its historical record, not edited to stay
+> current.
+
 Honest list of what's left, in three tiers. Nothing here is hidden or silently stubbed
 in the code — every item below is either a documented design boundary or a genuinely
 unstarted future phase.
@@ -9,20 +17,20 @@ unstarted future phase.
 - ✅ **DONE (Phase A).** ~~Password reset flow.~~ Implemented:
   `POST /v1/auth/forgot-password` / `POST /v1/auth/reset-password`, with
   one-time expiring tokens, rate limiting, and audit logging. See
-  `PHASE_A_REPORT.md` and `docs/api/auth.md`.
+  `docs/history/PHASE_A_REPORT.md` and `docs/api/auth.md`.
 - ✅ **DONE (Phase A).** ~~Invite-token / accept-registration email flow.~~
   Implemented: `POST /v1/org/invitations` + accept flow, no existing account
-  required. See `PHASE_A_REPORT.md` and `docs/api/organizations.md`.
+  required. See `docs/history/PHASE_A_REPORT.md` and `docs/api/organizations.md`.
 
 ## Tier 2 — real UI gaps with no missing backend, safe to pick up any time
 
 - ✅ **DONE (Phase B).** ~~Command palette (⌘K).~~ Implemented: fuzzy search,
-  keyboard nav, live search across real resources, recents. See `PHASE_B_REPORT.md`.
+  keyboard nav, live search across real resources, recents. See `docs/history/PHASE_B_REPORT.md`.
 - ✅ **DONE (Phase B).** ~~Dark/light mode toggle.~~ Implemented: system
-  detection, localStorage persistence, no flash on load. See `PHASE_B_REPORT.md`.
+  detection, localStorage persistence, no flash on load. See `docs/history/PHASE_B_REPORT.md`.
 - ✅ **DONE (Phase B).** ~~Per-org feature-flag override UI.~~ Implemented,
   including the `GET /admin/feature-flags/{key}/overrides` endpoint added
-  specifically to support it. See `PHASE_B_REPORT.md`.
+  specifically to support it. See `docs/history/PHASE_B_REPORT.md`.
 - ✅ **DONE (Phase C).** ~~Public landing/pricing pages, onboarding flow.~~
   Landing, features, pricing, docs home, about, careers, contact, changelog,
   blog, status, legal pages, and 404 are all built. Onboarding flow (a guided
@@ -80,7 +88,7 @@ unstarted future phase.
 
 ## Phase D update — Developer Experience & Ecosystem
 
-Additive; nothing above was deleted. See `PHASE_D_REPORT.md` for the full account.
+Additive; nothing above was deleted. See `docs/history/PHASE_D_REPORT.md` for the full account.
 
 ### Done this phase
 
@@ -99,7 +107,7 @@ Additive; nothing above was deleted. See `PHASE_D_REPORT.md` for the full accoun
   assertions each.
 - ✅ Found and fixed real schema drift between the first Phase D SDK pass and
   the actual `alerts`/`billing`/`analytics` backend schemas — see
-  `RELEASE_CHECKLIST.md`'s Phase D section for the specifics. This also caught
+  `docs/history/RELEASE_CHECKLIST.md`'s Phase D section for the specifics. This also caught
   and fixed two consequent CLI bugs (`billing usage`, `notifications`).
 
 ### Environment limitations (not code defects)
@@ -148,7 +156,7 @@ Additive; nothing above was deleted. See `PHASE_D_REPORT.md` for the full accoun
 
 Additive; nothing above was deleted, and this section is intentionally the
 up-to-date status where it differs from the Phase D section above. See
-`PHASE_D_REPORT.md` for the full account.
+`docs/history/PHASE_D_REPORT.md` for the full account.
 
 ### Done this pass
 

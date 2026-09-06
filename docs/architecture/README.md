@@ -35,12 +35,13 @@ rather than described as working.
 
 **IMPLEMENTED:** frontend, backend API, PostgreSQL, Redis, Celery workers + beat,
 the full auth/RBAC/multi-tenancy/delivery/retry/DLQ/billing/alerts/audit stack
-described below.
+described below, and an AI Gateway (Copilot chat + incident root-cause
+analysis) — see the "AI layer" section further down for its actual shape.
 
 **NOT IMPLEMENTED:** Kafka (no message broker other than Redis exists anywhere
-in this codebase), Kubernetes manifests (`infra/k8s` is an empty directory),
-Nginx config (`infra/nginx` is empty), Grafana dashboards (`infra/grafana` is
-empty), an AI/copilot service (no such module exists in `backend/app/modules`).
+in this codebase), Kubernetes manifests, Nginx config, or Grafana dashboards
+(`infra/` currently contains only `infra/docker/` — no `k8s`, `nginx`, or
+`grafana` directories exist to check).
 
 ## Frontend
 
@@ -56,7 +57,7 @@ State: React context for auth (`lib/auth-context.tsx`) and theme
 single typed client (`lib/api-client.ts`) that attaches the bearer token from
 localStorage and normalizes error responses.
 
-**IMPLEMENTED.** See `PHASE_A_REPORT.md` / `PHASE_B_REPORT.md` / `PHASE_C_REPORT.md` for the build history.
+**IMPLEMENTED.** See `docs/history/PHASE_A_REPORT.md` / `docs/history/PHASE_B_REPORT.md` / `docs/history/PHASE_C_REPORT.md` for the build history.
 
 ## Backend
 
@@ -111,8 +112,21 @@ schedule; `backend/app/workers/tasks.py` defines the tasks:
 - `cleanup_expired_delivery_logs` -- runs once a day, purges delivery logs past
   the organization's plan-defined retention window.
 
-`docker-compose.yml` runs two separate Celery containers: `worker` (executes
-tasks) and `beat` (schedules them) -- this split is real, not aspirational.
+`docker-compose.yml` and `docker-compose.prod.yml` run Celery as three
+separate services: `worker` (default queue: delivery/retry tasks),
+`worker-insights` (the `insights` queue: AI/analytics background tasks, kept
+separate so a slow AI provider call can never delay a webhook retry), and
+`beat` (the scheduler) -- this split is real, not aspirational.
+
+**Operational lesson worth knowing:** the actual production deployment
+(Render) doesn't use this docker-compose topology -- it runs a single
+container (`backend/start.sh`) that bundles worker + API together for cost
+reasons. That script omitted `beat` entirely for a period, so retries only
+ever fired once — `check_due_retries` never ran outside a properly
+configured `beat` process, so a job stuck at `retrying` had nothing to move
+it forward. Fixed by adding `beat` as a third background process in
+`start.sh` too. The lesson: if you ever change how this app is deployed
+outside `docker-compose.yml`, `beat` running is not optional.
 
 **IMPLEMENTED.**
 
@@ -210,17 +224,68 @@ immutable row with actor, action, resource, IP, and timestamp.
 
 ## Observability
 
-Structured logging exists throughout the request path. An
-`OTEL_EXPORTER_OTLP_ENDPOINT` setting exists in `backend/app/core/config.py`,
-but no OpenTelemetry instrumentation code (spans, tracers, exporters) exists
-anywhere else in the codebase -- the setting is a placeholder for future wiring,
-not active tracing today. There are no Grafana dashboards (`infra/grafana` is an
-empty directory) and no Prometheus/metrics-scraping endpoint.
+Structured logging exists throughout the request path.
 
-**Structured logging: IMPLEMENTED. Distributed tracing / metrics dashboards: Planned / Not currently implemented.**
+**Metrics: real, not a placeholder.** `GET /metrics` (`backend/app/main.py`)
+serves a standard Prometheus-format scrape combining two sources (see
+`backend/app/core/metrics.py`'s module docstring for why they're split):
+`prometheus_fastapi_instrumentator`'s automatic HTTP request metrics, plus
+hand-defined `Counter`/`Gauge` metrics for things that only make sense
+refreshed from a live DB query at scrape time (queue depth, worker health)
+rather than accumulated in-process — necessary because Celery workers are
+separate processes from the API process that serves `/metrics`.
+
+**Distributed tracing: real code, off by default.** `backend/app/core/tracing.py`'s
+`setup_tracing()` wires an actual `OTLPSpanExporter` and registers
+`FastAPIInstrumentor` when `OTEL_EXPORTER_OTLP_ENDPOINT` is set — this is a
+genuine OpenTelemetry integration, not an unused config placeholder. With the
+setting unset (the default everywhere so far), `setup_tracing()` returns
+`None` and the app skips instrumentation entirely — zero overhead, not a
+half-implemented feature silently failing.
+
+There are no Grafana dashboards — `infra/` has no `grafana` directory to
+check (see the System overview section above).
+
+**IMPLEMENTED: Prometheus metrics, structured logging, and OpenTelemetry
+tracing (inactive until `OTEL_EXPORTER_OTLP_ENDPOINT` is configured).
+Grafana dashboards: Planned / Not currently implemented.**
 
 ## AI layer
 
-**No AI/copilot service exists anywhere in `backend/app/modules`.** The
-"AI Copilot" feature referenced on the marketing Features page is explicitly
-labeled "Coming soon" there and has no backend counterpart. **Not implemented.**
+Real, implemented, and live in production (this section was previously stale —
+see `docs/development-history.md` for when it was actually built). Three
+distinct pieces, each with one job:
+
+```
+Insights AI (RCA)  ──┐
+                      ├──▶  AI Gateway  ──▶  Provider Adapter  ──▶  External API
+Copilot (chat)     ──┘      (contracts,      (openai/anthropic/
+                             registry,         gemini/xai)
+                             fallback,
+                             metrics)
+```
+
+- **`backend/app/modules/ai_gateway/`** — the single place that knows how to
+  talk to an AI provider. `contracts.py` defines a provider-neutral
+  request/response/error shape; `registry.py` tracks which providers have an
+  adapter and what each supports; `gateway.py` resolves provider → model →
+  validates the request needs a capability the provider actually has → calls
+  the adapter → normalizes the response → falls back to a second provider on
+  a transient failure, if `AI_FALLBACK_PROVIDER` is configured.
+  `adapters/{openai,anthropic,gemini,xai}.py` each translate the gateway's
+  request shape into that vendor's actual API call. **This module has no
+  knowledge of incidents, prompts, or copilot context** — that boundary is
+  deliberate (see the module's own docstrings).
+- **`backend/app/modules/insights/ai/`** — root-cause-analysis for incidents.
+  Builds a prompt from incident/anomaly data (`prompt.py`), calls the gateway
+  through a thin `provider.py` shim, validates the response against its own
+  JSON schema (`schemas.py`).
+- **`backend/app/modules/insights/copilot/`** — the dashboard's Copilot chat.
+  Builds conversational context (`context.py`), its own prompt (`prompt.py`),
+  routes live at `/v1/insights/intelligence/copilot`.
+
+Disabled by default (`AI_PROVIDER_ENABLED=false`) — with no key configured,
+every call fails fast with a clear "AI is not configured" error rather than a
+confusing timeout or a fake response. See `docs/CONFIGURATION.md` for every
+`AI_*` setting, and `docs/DEVELOPER_GUIDE.md`'s "I want to add an AI
+provider" walkthrough for extending this.

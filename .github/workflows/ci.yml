@@ -1,9 +1,9 @@
 name: CI
 
-# Runs the same checks documented in PHASE_A-E_REPORT.md / RELEASE_CHECKLIST.md,
+# Runs the same checks documented in docs/history/PHASE_A_REPORT.md through docs/history/PHASE_E_REPORT.md / docs/history/RELEASE_CHECKLIST.md,
 # as real CI instead of a manually-run checklist. Mirrors the actual local dev
 # commands 1:1 -- nothing here is invented; every job/step corresponds to a
-# command that was run and verified during Phase E (see PHASE_E_REPORT.md).
+# command that was run and verified during Phase E (see docs/history/PHASE_E_REPORT.md).
 #
 # Go and Java are still included as jobs (matrix-complete per Phase E objective 8),
 # even though this sandbox could not run them itself (no Go toolchain, no JDK

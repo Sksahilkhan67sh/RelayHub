@@ -78,7 +78,7 @@ global toggle for that one organization.
 ## GET /admin/feature-flags/{key}/overrides
 
 Added in Phase B specifically so the admin UI could show current override state
-instead of writing blind -- see `PHASE_B_REPORT.md`.
+instead of writing blind -- see `docs/history/PHASE_B_REPORT.md`.
 
 - **Response `200`:** `FeatureFlagOverrideOut[]` -- includes `organization_name`
 

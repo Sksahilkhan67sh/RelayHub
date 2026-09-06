@@ -43,7 +43,7 @@ export class RelayHubClient {
     if (!config.apiKey) throw new Error("RelayHubClient requires an apiKey");
 
     // baseUrl carries "/v1" so resource paths below can use the literal API paths
-    // (e.g. "/v1/endpoints") as documented in the API reference and RELEASE_CHECKLIST.md.
+    // (e.g. "/v1/endpoints") as documented in the API reference and docs/history/RELEASE_CHECKLIST.md.
     const baseUrl = (config.baseUrl ?? DEFAULT_BASE_URL).replace(/\/v1\/?$/, "").replace(/\/$/, "");
 
     const transportConfig: TransportConfig = {
