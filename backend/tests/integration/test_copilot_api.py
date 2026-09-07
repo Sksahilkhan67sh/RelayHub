@@ -120,6 +120,60 @@ async def test_copilot_chat_success_grounds_answer_and_filters_hallucinated_cita
     assert len(fake_provider.calls) == 1
 
 
+async def test_copilot_chat_never_cites_another_organizations_incident(client, db_session, monkeypatch):
+    """
+    Regression test for a real gap found during a maintainability audit: despite
+    context.py's own docstring and code both scoping every query by
+    organization_id, no test actually proved a cross-tenant leak was impossible
+    end-to-end (unit/test_copilot.py's similarly-named
+    test_prompt_includes_focused_incident_and_org_scoped_data_only only checks
+    prompt formatting for a single, already-scoped context object -- it never
+    seeds two organizations). This test seeds an incident in a *different*
+    organization than the one asking, and confirms it never reaches the model's
+    context (via the fake provider's recorded call) or survives as a citation
+    even if the model somehow guessed its ID.
+    """
+    from app.main import app
+    from app.modules.insights.copilot.routes import _get_ai_provider_or_none
+
+    monkeypatch.setattr(settings, "AI_PROVIDER_ENABLED", True)
+
+    other_token = await register_and_get_token(client, "copilot-other-org@example.com")
+    other_org_id = await _org_id(client, other_token)
+    other_endpoint_id = await create_endpoint(client, other_token)
+    other_incident_id = await _seed_incident(db_session, organization_id=other_org_id, endpoint_id=uuid.UUID(other_endpoint_id))
+
+    token = await register_and_get_token(client, "copilot-asking-org@example.com")
+
+    fake_provider = FakeAIProvider()
+    # Simulates a model that (correctly or adversarially) guesses/hallucinates the
+    # other org's real incident ID -- the defense must hold even then, not just
+    # when the model never mentions it.
+    fake_provider.queue_response(json.dumps({
+        "answer": "I don't see any incidents on your account right now.",
+        "citations": [str(other_incident_id)],
+    }))
+    app.dependency_overrides[_get_ai_provider_or_none] = lambda: fake_provider
+
+    resp = await client.post(
+        "/v1/insights/intelligence/copilot/chat",
+        json={"message": "why is my endpoint failing?"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    del app.dependency_overrides[_get_ai_provider_or_none]
+
+    assert resp.status_code == 200
+    body = resp.json()
+    # The hallucinated/guessed citation to the other org's incident must be dropped.
+    assert body["citations"] == []
+    # And the other org's incident/RCA content must never have reached the prompt
+    # sent to the model in the first place.
+    assert len(fake_provider.calls) == 1
+    sent_prompt = fake_provider.calls[0].user_prompt
+    assert str(other_incident_id) not in sent_prompt
+    assert "Destination 5xx spike" not in sent_prompt
+
+
 async def test_copilot_chat_fails_safe_on_malformed_ai_output(client, db_session, monkeypatch):
     from app.main import app
     from app.modules.insights.copilot.routes import _get_ai_provider_or_none

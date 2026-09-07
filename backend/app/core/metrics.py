@@ -42,7 +42,7 @@ from __future__ import annotations
 from prometheus_client import Counter, Gauge
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.admin import service as admin_service
+from app.modules.admin import operations as admin_operations
 from app.modules.delivery.models import DeliveryJobStatus
 
 # --- Queue depth by status (mirrors admin/service.py's get_queue_depth) ---
@@ -141,17 +141,17 @@ async def refresh_reliability_gauges(db: AsyncSession) -> None:
     queries `get_queue_depth`/`get_worker_health`/`get_delivery_metrics` already run
     for the equivalent JSON admin endpoints -- no new query patterns, no N+1s.
     """
-    queue_depth = await admin_service.get_queue_depth(db)
+    queue_depth = await admin_operations.get_queue_depth(db)
     for status_value in _QUEUE_DEPTH_STATUSES:
         QUEUE_DEPTH.labels(status=status_value).set(queue_depth[status_value])
     DELIVERIES_LAST_HOUR.labels(outcome="success").set(queue_depth["success_last_hour"])
     DELIVERIES_LAST_HOUR.labels(outcome="failed").set(queue_depth["failed_last_hour"])
 
-    worker_health = await admin_service.get_worker_health(db)
+    worker_health = await admin_operations.get_worker_health(db)
     WORKER_HEALTHY_COUNT.set(worker_health["healthy_count"])
     WORKER_UNHEALTHY_COUNT.set(worker_health["unhealthy_count"])
 
-    delivery_metrics = await admin_service.get_delivery_metrics(db)
+    delivery_metrics = await admin_operations.get_delivery_metrics(db)
     # avg/p95 latency and the two rates are all `None` when there's no data yet in
     # the window (see get_delivery_metrics) -- Prometheus gauges can't represent
     # "no data" natively, so leave the gauge at its last-known value rather than

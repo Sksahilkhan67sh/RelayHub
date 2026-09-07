@@ -228,7 +228,7 @@ async def test_reconciliation_lease_overrides_time_heuristic_when_worker_alive(c
     Recovering it anyway would risk a duplicate concurrent delivery attempt, which
     is exactly what a real lease is supposed to prevent.
     """
-    from app.modules.admin import service as admin_service
+    from app.modules.admin import operations as admin_operations
 
     job_id = await _publish_and_get_job_id(client, db_session, unique_email)
 
@@ -247,7 +247,7 @@ async def test_reconciliation_lease_overrides_time_heuristic_when_worker_alive(c
     await db_session.commit()
 
     # worker is heartbeating right now -- clearly alive
-    await admin_service.upsert_worker_heartbeat(db_session, worker_id="host-alive-1", hostname="host-alive", pid=1, now=now)
+    await admin_operations.upsert_worker_heartbeat(db_session, worker_id="host-alive-1", hostname="host-alive", pid=1, now=now)
 
     fake_queue = InMemoryQueueClient()
     result = await reconcile_stuck_jobs(db_session, queue_client=fake_queue, now=now)
@@ -269,7 +269,7 @@ async def test_reconciliation_lease_recovers_job_fast_when_worker_confirmed_dead
     heuristic would have kicked in -- because the lease gives a much stronger,
     faster signal that the worker (and therefore the job) is genuinely abandoned.
     """
-    from app.modules.admin import service as admin_service
+    from app.modules.admin import operations as admin_operations
 
     job_id = await _publish_and_get_job_id(client, db_session, unique_email)
 
@@ -290,7 +290,7 @@ async def test_reconciliation_lease_recovers_job_fast_when_worker_confirmed_dead
     # this worker's last heartbeat was well past LEASE_WORKER_STALE_AFTER (90s) --
     # confirmed dead, even though only 2 minutes have passed overall
     stale_heartbeat = now - timedelta(minutes=2)
-    await admin_service.upsert_worker_heartbeat(
+    await admin_operations.upsert_worker_heartbeat(
         db_session, worker_id="host-dead-1", hostname="host-dead", pid=1, now=stale_heartbeat
     )
 

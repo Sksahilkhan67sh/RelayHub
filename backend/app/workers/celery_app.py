@@ -108,14 +108,14 @@ def _run_heartbeat_loop(worker_id: str, hostname: str, pid: int, stop_event: thr
 
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-    from app.modules.admin import service as admin_service
+    from app.modules.admin import operations as admin_operations
 
     async def _beat_once() -> None:
         engine = create_async_engine(settings.DATABASE_URL, pool_pre_ping=True)
         session_maker = async_sessionmaker(bind=engine, expire_on_commit=False)
         try:
             async with session_maker() as db:
-                await admin_service.upsert_worker_heartbeat(db, worker_id=worker_id, hostname=hostname, pid=pid)
+                await admin_operations.upsert_worker_heartbeat(db, worker_id=worker_id, hostname=hostname, pid=pid)
         except Exception:  # noqa: BLE001 - a missed heartbeat write must never crash the worker process itself
             import logging
 
