@@ -188,6 +188,17 @@ what does *not* belong there.
 - **Owns:** cross-organization views (all orgs, feature flags, abuse
   reports, force-cancel/retry any delivery job) gated by the separate
   `is_platform_admin` flag, independent of any organization's RBAC role.
+- **Internal structure:** split into 4 focused files matching the admin
+  frontend's own page boundaries (`/admin/organizations`,
+  `/admin/operations`, `/admin/feature-flags`, `/admin/abuse-reports`):
+  `organizations.py` (list/suspend/unsuspend/impersonate),
+  `operations.py` (queue depth, delivery metrics, worker health, system
+  health, billing overview, force-retry/cancel a delivery job, global
+  delivery-job search), `feature_flags.py` (flag CRUD + per-org
+  overrides + the `is_feature_enabled()` helper other modules call),
+  `abuse_reports.py` (report CRUD). Import from whichever one actually
+  owns what you need — e.g. `from app.modules.admin import operations
+  as admin_operations` — not a single catch-all `admin.service`.
 
 ### `api_keys/`, `content/`, `newsletter/` — smaller, self-contained modules
 - `api_keys/` — live/test API key issuance, scoping, rotation, revocation.
