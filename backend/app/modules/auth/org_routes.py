@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.notification_client import NotificationDispatcher, get_notification_dispatcher
 from app.db.session import get_db
-from app.modules.admin import service as admin_service
+from app.modules.admin import abuse_reports as admin_abuse_reports
 from app.modules.admin.schemas import AbuseReportOut
 from app.modules.auth import invitation_service, org_service
 from app.modules.auth.dependencies import AuthContext, get_current_auth, require_role
@@ -83,7 +83,7 @@ async def create_org_abuse_report(
     platform review. Lands in the same table platform admins already review at
     /admin/abuse-reports.
     """
-    return await admin_service.create_org_self_report(
+    return await admin_abuse_reports.create_org_self_report(
         db, organization_id=auth.organization_id, reason=payload.reason, reported_by_user_id=auth.user_id
     )
 
@@ -101,7 +101,7 @@ async def list_org_abuse_reports(
     matching who notify_org_admins fans the notification out to -- unlike the
     POST above, which any member can call.
     """
-    return await admin_service.list_abuse_reports_for_org(db, organization_id=auth.organization_id)
+    return await admin_abuse_reports.list_abuse_reports_for_org(db, organization_id=auth.organization_id)
 
 
 @router.post("/invitations", response_model=InvitationOut, status_code=status.HTTP_201_CREATED)

@@ -148,16 +148,16 @@ async def test_system_health_reports_worker_heartbeats(client, unique_email, db_
     healthy, and a heartbeat older than WORKER_HEARTBEAT_STALE_AFTER is reported
     unhealthy -- proving get_system_health reads real data, not a placeholder.
     """
-    from app.modules.admin import service as admin_service
+    from app.modules.admin import operations as admin_operations
 
     token = await register_and_get_token(client, unique_email)
     await make_platform_admin(client, db_session, token)
 
     now = datetime.now(timezone.utc)
-    await admin_service.upsert_worker_heartbeat(
+    await admin_operations.upsert_worker_heartbeat(
         db_session, worker_id="host-a-111", hostname="host-a", pid=111, now=now
     )
-    await admin_service.upsert_worker_heartbeat(
+    await admin_operations.upsert_worker_heartbeat(
         db_session, worker_id="host-b-222", hostname="host-b", pid=222, now=now - timedelta(minutes=10)
     )
 
@@ -176,14 +176,14 @@ async def test_worker_heartbeat_upsert_updates_existing_row_not_duplicates(clien
     """A worker process re-heartbeating under the same worker_id updates its row in place."""
     from sqlalchemy import func, select
 
-    from app.modules.admin import service as admin_service
+    from app.modules.admin import operations as admin_operations
     from app.modules.admin.models import WorkerHeartbeat
 
     first = datetime.now(timezone.utc) - timedelta(seconds=30)
     second = datetime.now(timezone.utc)
 
-    await admin_service.upsert_worker_heartbeat(db_session, worker_id="host-a-111", hostname="host-a", pid=111, now=first)
-    await admin_service.upsert_worker_heartbeat(db_session, worker_id="host-a-111", hostname="host-a", pid=111, now=second)
+    await admin_operations.upsert_worker_heartbeat(db_session, worker_id="host-a-111", hostname="host-a", pid=111, now=first)
+    await admin_operations.upsert_worker_heartbeat(db_session, worker_id="host-a-111", hostname="host-a", pid=111, now=second)
 
     count = (
         await db_session.execute(select(func.count(WorkerHeartbeat.id)).where(WorkerHeartbeat.worker_id == "host-a-111"))
@@ -386,7 +386,7 @@ async def test_admin_global_logs_spans_organizations(client, unique_email, db_se
 
 @pytest.mark.asyncio
 async def test_feature_flag_crud_and_evaluation(client, unique_email, db_session):
-    from app.modules.admin import service as admin_service
+    from app.modules.admin import feature_flags as admin_feature_flags
 
     token = await register_and_get_token(client, unique_email)
     await make_platform_admin(client, db_session, token)
@@ -413,13 +413,13 @@ async def test_feature_flag_crud_and_evaluation(client, unique_email, db_session
     assert update_resp.status_code == 200
     assert update_resp.json()["is_enabled_globally"] is True
 
-    enabled = await admin_service.is_feature_enabled(db_session, key="new-analytics-ui")
+    enabled = await admin_feature_flags.is_feature_enabled(db_session, key="new-analytics-ui")
     assert enabled is True
 
 
 @pytest.mark.asyncio
 async def test_feature_flag_per_org_override_takes_precedence(client, unique_email, db_session):
-    from app.modules.admin import service as admin_service
+    from app.modules.admin import feature_flags as admin_feature_flags
 
     token = await register_and_get_token(client, unique_email)
     await make_platform_admin(client, db_session, token)
@@ -439,10 +439,10 @@ async def test_feature_flag_per_org_override_takes_precedence(client, unique_ema
     )
     assert override_resp.status_code == 200
 
-    enabled_for_org = await admin_service.is_feature_enabled(db_session, key="beta-feature", organization_id=uuid.UUID(org_id))
+    enabled_for_org = await admin_feature_flags.is_feature_enabled(db_session, key="beta-feature", organization_id=uuid.UUID(org_id))
     assert enabled_for_org is False
 
-    enabled_globally_elsewhere = await admin_service.is_feature_enabled(db_session, key="beta-feature", organization_id=uuid.uuid4())
+    enabled_globally_elsewhere = await admin_feature_flags.is_feature_enabled(db_session, key="beta-feature", organization_id=uuid.uuid4())
     assert enabled_globally_elsewhere is True
 
 

@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.queue_client import QueueClient, get_queue_client
 from app.db.session import get_db
-from app.modules.admin import service
+from app.modules.admin import abuse_reports, feature_flags, operations, organizations
 from app.modules.admin.schemas import (
     AbuseReportOut,
     AdminOrganizationOut,
@@ -36,7 +36,7 @@ async def list_organizations(
     auth: AuthContext = Depends(require_platform_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    return await service.list_organizations(db, limit=limit, offset=offset)
+    return await organizations.list_organizations(db, limit=limit, offset=offset)
 
 
 @router.post("/organizations/{organization_id}/suspend", response_model=AdminOrganizationOut)
@@ -47,11 +47,11 @@ async def suspend_organization(
     auth: AuthContext = Depends(require_platform_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    org = await service.suspend_organization(
+    org = await organizations.suspend_organization(
         db, organization_id=organization_id, reason=payload.reason, actor_user_id=auth.user_id,
         ip_address=request.client.host if request.client else None,
     )
-    orgs = await service.list_organizations(db, limit=1, offset=0)
+    orgs = await organizations.list_organizations(db, limit=1, offset=0)
     match = next((o for o in orgs if o["id"] == org.id), None)
     return match or {
         "id": org.id, "name": org.name, "slug": org.slug, "is_suspended": org.is_suspended,
@@ -67,7 +67,7 @@ async def unsuspend_organization(
     auth: AuthContext = Depends(require_platform_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    org = await service.unsuspend_organization(
+    org = await organizations.unsuspend_organization(
         db, organization_id=organization_id, actor_user_id=auth.user_id,
         ip_address=request.client.host if request.client else None,
     )
@@ -81,7 +81,7 @@ async def impersonate_organization(
     auth: AuthContext = Depends(require_platform_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    token, email, expires_in = await service.impersonate_organization_owner(
+    token, email, expires_in = await organizations.impersonate_organization_owner(
         db, organization_id=organization_id, actor_user_id=auth.user_id,
         ip_address=request.client.host if request.client else None,
     )
@@ -90,22 +90,22 @@ async def impersonate_organization(
 
 @router.get("/queues", response_model=QueueDepthOut)
 async def get_queue_depth(auth: AuthContext = Depends(require_platform_admin), db: AsyncSession = Depends(get_db)):
-    return await service.get_queue_depth(db)
+    return await operations.get_queue_depth(db)
 
 
 @router.get("/system-health", response_model=SystemHealthOut)
 async def get_system_health(auth: AuthContext = Depends(require_platform_admin), db: AsyncSession = Depends(get_db)):
-    return await service.get_system_health(db)
+    return await operations.get_system_health(db)
 
 
 @router.get("/delivery-metrics", response_model=DeliveryMetricsOut)
 async def get_delivery_metrics(auth: AuthContext = Depends(require_platform_admin), db: AsyncSession = Depends(get_db)):
-    return await service.get_delivery_metrics(db)
+    return await operations.get_delivery_metrics(db)
 
 
 @router.get("/billing-overview", response_model=BillingOverviewOut)
 async def get_billing_overview(auth: AuthContext = Depends(require_platform_admin), db: AsyncSession = Depends(get_db)):
-    return await service.get_billing_overview(db)
+    return await operations.get_billing_overview(db)
 
 
 @router.get("/logs")
@@ -117,7 +117,7 @@ async def admin_global_logs(
     auth: AuthContext = Depends(require_platform_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    jobs = await service.admin_search_delivery_jobs(
+    jobs = await operations.admin_search_delivery_jobs(
         db, organization_id=organization_id, status_filter=status_filter, limit=limit, offset=offset
     )
     return [
@@ -134,7 +134,7 @@ async def force_retry_delivery_job(
     job_id: uuid.UUID, request: Request, auth: AuthContext = Depends(require_platform_admin), db: AsyncSession = Depends(get_db),
     queue_client: QueueClient = Depends(get_queue_client),
 ):
-    job = await service.force_retry_delivery_job(
+    job = await operations.force_retry_delivery_job(
         db, job_id=job_id, actor_user_id=auth.user_id, ip_address=request.client.host if request.client else None,
         queue_client=queue_client,
     )
@@ -145,7 +145,7 @@ async def force_retry_delivery_job(
 async def force_cancel_delivery_job(
     job_id: uuid.UUID, request: Request, auth: AuthContext = Depends(require_platform_admin), db: AsyncSession = Depends(get_db)
 ):
-    job = await service.force_cancel_delivery_job(
+    job = await operations.force_cancel_delivery_job(
         db, job_id=job_id, actor_user_id=auth.user_id, ip_address=request.client.host if request.client else None
     )
     return ForceActionResponse(id=job.id, status=job.status)
@@ -155,14 +155,14 @@ async def force_cancel_delivery_job(
 async def create_feature_flag(
     payload: CreateFeatureFlagRequest, auth: AuthContext = Depends(require_platform_admin), db: AsyncSession = Depends(get_db)
 ):
-    return await service.create_feature_flag(
+    return await feature_flags.create_feature_flag(
         db, key=payload.key, description=payload.description, is_enabled_globally=payload.is_enabled_globally
     )
 
 
 @router.get("/feature-flags", response_model=list[FeatureFlagOut])
 async def list_feature_flags(auth: AuthContext = Depends(require_platform_admin), db: AsyncSession = Depends(get_db)):
-    return await service.list_feature_flags(db)
+    return await feature_flags.list_feature_flags(db)
 
 
 @router.patch("/feature-flags/{key}", response_model=FeatureFlagOut)
@@ -170,7 +170,7 @@ async def update_feature_flag(
     key: str, payload: UpdateFeatureFlagRequest, request: Request,
     auth: AuthContext = Depends(require_platform_admin), db: AsyncSession = Depends(get_db),
 ):
-    return await service.update_feature_flag(
+    return await feature_flags.update_feature_flag(
         db, key=key, description=payload.description, is_enabled_globally=payload.is_enabled_globally,
         actor_user_id=auth.user_id, ip_address=request.client.host if request.client else None,
     )
@@ -180,7 +180,7 @@ async def update_feature_flag(
 async def set_feature_flag_override(
     key: str, payload: SetFeatureFlagOverrideRequest, auth: AuthContext = Depends(require_platform_admin), db: AsyncSession = Depends(get_db)
 ):
-    await service.set_feature_flag_override(db, key=key, organization_id=payload.organization_id, is_enabled=payload.is_enabled)
+    await feature_flags.set_feature_flag_override(db, key=key, organization_id=payload.organization_id, is_enabled=payload.is_enabled)
     return {"key": key, "organization_id": str(payload.organization_id), "is_enabled": payload.is_enabled}
 
 
@@ -188,7 +188,7 @@ async def set_feature_flag_override(
 async def list_feature_flag_overrides(
     key: str, auth: AuthContext = Depends(require_platform_admin), db: AsyncSession = Depends(get_db)
 ):
-    rows = await service.list_feature_flag_overrides(db, key=key)
+    rows = await feature_flags.list_feature_flag_overrides(db, key=key)
     return [
         FeatureFlagOverrideOut(
             id=override.id, flag_id=override.flag_id, organization_id=override.organization_id,
@@ -203,7 +203,7 @@ async def list_feature_flag_overrides(
 async def create_abuse_report(
     payload: CreateAbuseReportRequest, auth: AuthContext = Depends(require_platform_admin), db: AsyncSession = Depends(get_db)
 ):
-    return await service.create_abuse_report(
+    return await abuse_reports.create_abuse_report(
         db, organization_id=payload.organization_id, reason=payload.reason, reported_by_user_id=auth.user_id
     )
 
@@ -212,7 +212,7 @@ async def create_abuse_report(
 async def list_abuse_reports(
     status: str | None = Query(default=None), auth: AuthContext = Depends(require_platform_admin), db: AsyncSession = Depends(get_db)
 ):
-    return await service.list_abuse_reports(db, status_filter=status)
+    return await abuse_reports.list_abuse_reports(db, status_filter=status)
 
 
 @router.patch("/abuse-reports/{report_id}", response_model=AbuseReportOut)
@@ -220,7 +220,7 @@ async def resolve_abuse_report(
     report_id: uuid.UUID, payload: ResolveAbuseReportRequest, request: Request,
     auth: AuthContext = Depends(require_platform_admin), db: AsyncSession = Depends(get_db),
 ):
-    return await service.resolve_abuse_report(
+    return await abuse_reports.resolve_abuse_report(
         db, report_id=report_id, new_status=payload.status, resolution_notes=payload.resolution_notes,
         actor_user_id=auth.user_id, ip_address=request.client.host if request.client else None,
     )
