@@ -3,6 +3,15 @@
   "version": "1.0.2",
   "description": "Official Node.js / TypeScript SDK for the RelayHub webhook and event delivery API.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Sksahilkhan67sh/RelayHub.git",
+    "directory": "sdks/node"
+  },
+  "homepage": "https://github.com/Sksahilkhan67sh/RelayHub/tree/main/sdks/node#readme",
+  "bugs": {
+    "url": "https://github.com/Sksahilkhan67sh/RelayHub/issues"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
