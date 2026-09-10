@@ -164,6 +164,7 @@ There is no "Projects" resource in the backend, and none of the SDKs invent one.
 - [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) — every environment variable, current and accurate
 - [`docs/architecture/README.md`](docs/architecture/README.md) — implemented-vs-planned architecture reference
 - [`docs/architecture/diagrams.md`](docs/architecture/diagrams.md) — Mermaid diagrams for the major flows
+- [`docs/RELIABILITY.md`](docs/RELIABILITY.md) — delivery/retry/DLQ lifecycle, crash safety, idempotency, and the invariants that protect them
 
 **Reference:**
 - `docs/api/` — API reference, one file per backend module
