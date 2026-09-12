@@ -1,10 +1,67 @@
 import uuid
 from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.common.realtime_publisher import InMemoryRealtimePublisher, channel_for_org
+from app.common.realtime_publisher import (
+    InMemoryRealtimePublisher,
+    RedisRealtimePublisher,
+    channel_for_org,
+    get_realtime_publisher,
+    new_realtime_publisher,
+)
 from app.modules.realtime.events import emit_delivery_update
+
+
+def _fake_redis_client() -> MagicMock:
+    client = MagicMock()
+    client.aclose = AsyncMock()
+    return client
+
+
+@pytest.mark.asyncio
+async def test_new_realtime_publisher_returns_a_fresh_instance_each_call(monkeypatch):
+    """Regression test for the "attached to a different loop" production bug:
+
+    Celery tasks each run in their own fresh `asyncio.run()` loop, so anything
+    they use that holds an asyncio-bound resource (like a redis.asyncio client)
+    must be constructed fresh per task, never shared via a cached singleton --
+    see app/workers/tasks.py's `_run()`/`_run_reconcile_stuck_jobs()`, which
+    call this instead of the process-wide `get_realtime_publisher()`.
+    """
+    created_clients = []
+
+    def _from_url(url):
+        client = _fake_redis_client()
+        created_clients.append(client)
+        return client
+
+    monkeypatch.setattr("redis.asyncio.from_url", _from_url)
+
+    first = new_realtime_publisher()
+    second = new_realtime_publisher()
+
+    assert isinstance(first, RedisRealtimePublisher)
+    assert first is not second, "each call must return a brand-new instance, not a cached singleton"
+    assert len(created_clients) == 2, "each instance must have its own underlying redis client"
+
+    await first.aclose()
+    await second.aclose()
+    created_clients[0].aclose.assert_awaited_once()
+    created_clients[1].aclose.assert_awaited_once()
+
+
+def test_get_realtime_publisher_remains_a_cached_singleton(monkeypatch):
+    """`get_realtime_publisher()` is for the single-event-loop FastAPI process
+    only -- it must stay cached there (that's correct and intentional), in
+    contrast to `new_realtime_publisher()` above."""
+    monkeypatch.setattr("redis.asyncio.from_url", lambda url: _fake_redis_client())
+    get_realtime_publisher.cache_clear()
+    try:
+        assert get_realtime_publisher() is get_realtime_publisher()
+    finally:
+        get_realtime_publisher.cache_clear()
 
 
 @pytest.mark.asyncio

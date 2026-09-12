@@ -69,6 +69,15 @@ class RedisRealtimePublisher:
     def subscribe(self, organization_id: uuid.UUID) -> "RealtimeSubscription":
         return RedisRealtimeSubscription(self._redis, organization_id)
 
+    async def aclose(self) -> None:
+        """Release this instance's Redis connection(s).
+
+        Only meaningful for a publisher created via `new_realtime_publisher()`
+        (below) -- the process-wide singleton from `get_realtime_publisher()`
+        is intentionally never closed for the life of the process.
+        """
+        await self._redis.aclose()
+
 
 class RedisRealtimeSubscription:
     def __init__(self, redis: Any, organization_id: uuid.UUID) -> None:
@@ -171,6 +180,35 @@ class InMemoryRealtimeSubscription:
 
 @lru_cache
 def get_realtime_publisher() -> RealtimePublisher:
+    """Process-wide singleton, for the FastAPI/uvicorn process only.
+
+    Safe there because that process runs a single, long-lived event loop for
+    its entire lifetime, so the `redis.asyncio` client this lazily constructs
+    stays bound to the one loop that will ever use it.
+
+    Do NOT call this from Celery task code. Each Celery task in this codebase
+    runs inside its own fresh loop via `asyncio.run()` (see app/workers/tasks.py's
+    module docstring for why -- the same asyncpg-event-loop-binding reasoning
+    applies here). A cached client bound to the loop of whichever task happened
+    to touch it first raises `RuntimeError: ... attached to a different loop`
+    on every subsequent task's loop. Use `new_realtime_publisher()` instead, and
+    `await`-close it (`.aclose()`) when the task is done with it.
+    """
+    from app.core.config import settings
+
+    return RedisRealtimePublisher(settings.REDIS_URL)
+
+
+def new_realtime_publisher() -> RedisRealtimePublisher:
+    """A fresh, uncached `RedisRealtimePublisher` -- for Celery task code.
+
+    Each call returns a brand-new instance with its own `redis.asyncio` client,
+    so it's always safe to use from whatever fresh event loop the calling task
+    is running in. Callers own its lifecycle: `await publisher.aclose()` once
+    the task is finished with it (mirrors the fresh-engine-per-task, then
+    `engine.dispose()`, pattern already used for the DB engine in the same
+    call sites).
+    """
     from app.core.config import settings
 
     return RedisRealtimePublisher(settings.REDIS_URL)
