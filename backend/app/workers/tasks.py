@@ -30,20 +30,27 @@ logger = logging.getLogger(__name__)
 
 
 async def _run(job_id: uuid.UUID) -> None:
-    from app.common.realtime_publisher import get_realtime_publisher
+    from app.common.realtime_publisher import new_realtime_publisher
 
     engine = create_async_engine(settings.DATABASE_URL, pool_pre_ping=True)
     session_maker = async_sessionmaker(bind=engine, expire_on_commit=False)
     worker_id = get_worker_id()
+    # Fresh instance per task, not the process-wide get_realtime_publisher()
+    # singleton -- see that function's docstring for why: its cached
+    # redis.asyncio client would get bound to whichever task's asyncio.run()
+    # loop touches it first, then raise "attached to a different loop" on
+    # every task after that.
+    realtime_publisher = new_realtime_publisher()
 
     async with session_maker() as db:
         try:
             job = await execute_delivery_job(
-                db, job_id=job_id, worker_id=worker_id, realtime_publisher=get_realtime_publisher()
+                db, job_id=job_id, worker_id=worker_id, realtime_publisher=realtime_publisher
             )
             logger.info("delivery_job=%s finished with status=%s", job_id, job.status)
         except JobAlreadyClaimedError:
             logger.info("delivery_job=%s already claimed by another worker, skipping", job_id)
+    await realtime_publisher.aclose()
     await engine.dispose()
 
 
@@ -102,15 +109,19 @@ def cleanup_expired_delivery_logs_task() -> None:
 
 async def _run_reconcile_stuck_jobs() -> None:
     from app.common.queue_client import get_queue_client
-    from app.common.realtime_publisher import get_realtime_publisher
+    from app.common.realtime_publisher import new_realtime_publisher
     from app.modules.retry.reconciliation import reconcile_stuck_jobs
 
     engine = create_async_engine(settings.DATABASE_URL, pool_pre_ping=True)
     session_maker = async_sessionmaker(bind=engine, expire_on_commit=False)
+    # See _run()'s comment above: fresh publisher per task, never the cached
+    # get_realtime_publisher() singleton, to stay safe across asyncio.run()'s
+    # fresh loop each invocation.
+    realtime_publisher = new_realtime_publisher()
 
     async with session_maker() as db:
         result = await reconcile_stuck_jobs(
-            db, queue_client=get_queue_client(), realtime_publisher=get_realtime_publisher()
+            db, queue_client=get_queue_client(), realtime_publisher=realtime_publisher
         )
         if result.total_requeued:
             logger.warning(
@@ -119,6 +130,7 @@ async def _run_reconcile_stuck_jobs() -> None:
                 len(result.requeued_stale_queued),
                 len(result.requeued_missed_retries),
             )
+    await realtime_publisher.aclose()
     await engine.dispose()
 
 
