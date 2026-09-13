@@ -79,7 +79,19 @@ class DeliveryJob(Base, UUIDPKMixin, TimestampMixin, SoftDeleteMixin):
     # can read endpoint.max_retry_attempts to compute each job's effective max_attempts,
     # without a second query per job. Purely additive: no new column, no migration.
     endpoint: Mapped["Endpoint"] = relationship(viewonly=True)  # noqa: F821
-    attempts: Mapped[list["DeliveryAttempt"]] = relationship(back_populates="job", order_by="DeliveryAttempt.attempt_number")
+    attempts: Mapped[list["DeliveryAttempt"]] = relationship(back_populates="job", order_by="DeliveryAttempt.started_at")
+    # NOTE: ordered by started_at (chronological), not attempt_number. A DLQ replay
+    # (dlq/service.py's retry_dead_letter_job) resets attempt_number back to 0 to
+    # give the job a full fresh retry budget -- so a job that has ever been
+    # replayed can have multiple DeliveryAttempt rows sharing the same
+    # attempt_number (one from before the replay, one from after). Nothing is
+    # overwritten or lost -- every attempt row remains queryable by its own id/
+    # started_at -- but attempt_number is only unique *within* a single delivery
+    # cycle, not across the job's full lifetime. Ordering by started_at keeps
+    # `job.attempts` correctly chronological regardless. See docs/RELIABILITY.md
+    # "DLQ replay and attempt_number" for the full explanation and why a full
+    # execution_number/replay_count column was deliberately not added in this
+    # phase.
 
 
 class DeliveryAttempt(Base, UUIDPKMixin, TimestampMixin):
