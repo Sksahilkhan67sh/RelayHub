@@ -1,0 +1,95 @@
+name: Database Backup
+
+# Phase 2 (database disaster recovery hardening). Render's free Postgres plan
+# -- the current production plan for relayhub-db-user -- does not include
+# automated backups or PITR (confirmed via the Render API: plan: "free").
+# Rather than build a bespoke backup service (which would be new
+# infrastructure/network calls this project's architecture deliberately
+# avoids), this workflow reuses GitHub Actions' own scheduler and artifact
+# storage as the backup transport: zero additional cost, zero new
+# infrastructure, uses credentials that already have to exist somewhere.
+#
+# This does NOT replace a real managed-backup/PITR plan -- see
+# docs/operations/DATABASE_RECOVERY.md for the honest RPO/RTO this gives you
+# (worst case: up to 24h of data loss, since this runs once a day) versus
+# what an upgraded Render plan would give you (continuous WAL, minutes-level
+# RPO). This is the safety net for the free tier, not the target end state.
+#
+# REQUIRES MANUAL ACTION: this workflow only runs once the repository owner
+# adds a `BACKUP_DATABASE_URL` secret (Settings -> Secrets and variables ->
+# Actions) -- the *plain* `postgresql://...` form (pg_dump's own scheme, not
+# the app's `postgresql+asyncpg://`). No one running this workflow, including
+# Claude, can see or set that secret's value.
+
+on:
+  schedule:
+    # Once daily. Justified by evidence, not guessed: as of this phase,
+    # production traffic is a handful of events/deliveries per day (single-
+    # digit to low-tens of rows across all tables, ~10MB total database size)
+    # -- there is no evidence yet that a shorter interval is needed, and
+    # every run this frequent already outpaces the RPO the free Postgres plan
+    # gave us before this workflow existed (none at all). Revisit this
+    # cadence if/when real delivery volume grows enough that 24h of
+    # potential loss becomes materially risky -- see docs/RELIABILITY.md's
+    # "already-claimed" and retry-scan sections for how that volume is
+    # already being watched.
+    - cron: "17 3 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    # No BACKUP_DATABASE_URL secret configured yet -> skip cleanly rather than
+    # fail loudly on every scheduled run before the manual setup step happens.
+    if: ${{ github.repository == 'Sksahilkhan67sh/RelayHub' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check backup secret is configured
+        id: check_secret
+        run: |
+          if [ -z "${{ secrets.BACKUP_DATABASE_URL }}" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::BACKUP_DATABASE_URL secret is not set -- skipping backup. See docs/operations/DATABASE_RECOVERY.md for setup."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install postgresql-client
+        if: steps.check_secret.outputs.configured == 'true'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client
+
+      - name: Run backup
+        if: steps.check_secret.outputs.configured == 'true'
+        env:
+          DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+        run: ./scripts/backup_db.sh ./backups
+
+      - name: Verify dump integrity (structural, not a full restore)
+        if: steps.check_secret.outputs.configured == 'true'
+        run: |
+          DUMP_FILE=$(ls ./backups/*.dump | head -1)
+          echo "Verifying $DUMP_FILE ..."
+          # pg_restore --list parses the dump's table of contents without
+          # touching any database -- confirms the file is a structurally
+          # valid custom-format dump, not that it's empty/truncated/corrupt.
+          pg_restore --list "$DUMP_FILE" > /dev/null
+          SIZE=$(stat -c%s "$DUMP_FILE")
+          echo "Dump size: $SIZE bytes"
+          if [ "$SIZE" -lt 1024 ]; then
+            echo "::error::Backup file is suspiciously small ($SIZE bytes) -- likely an empty or failed dump."
+            exit 1
+          fi
+          echo "Backup structurally valid and non-trivial in size."
+
+      - name: Upload backup artifact
+        if: steps.check_secret.outputs.configured == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: relayhub-db-backup-${{ github.run_id }}
+          path: ./backups/*.dump
+          retention-days: 35
+          if-no-files-found: error
