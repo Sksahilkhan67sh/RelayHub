@@ -319,6 +319,79 @@ inspection where noted) rather than assumption:
   unchanged finding from the prior audit, not addressed in this phase
   (would require a paid Redis plan).
 
+## Phase 2: database disaster recovery hardening (2026-09-13)
+
+Full detail in `docs/operations/DATABASE_RECOVERY.md` -- this is a summary
+for anyone reading this file top-to-bottom.
+
+- **Backup: was completely absent, now scheduled (pending one manual step).**
+  Render's free Postgres plan (the current production plan) has no managed
+  backups or PITR -- confirmed via the Render API. Added
+  `.github/workflows/backup.yml`: a daily scheduled `pg_dump` (via the
+  existing `scripts/backup_db.sh`), with a structural integrity check
+  (`pg_restore --list`) and upload to a 35-day-retention GitHub Actions
+  artifact. **Does nothing until a `BACKUP_DATABASE_URL` repo secret is
+  added -- REQUIRES MANUAL ACTION.**
+- **PITR: NOT AVAILABLE** on the current plan. Not a configuration gap --
+  a plan limitation. Upgrading to a paid Render Postgres plan is the only
+  path to real PITR; not done in this phase without explicit confirmation
+  (billing decision).
+- **RPO: 24 hours, once the backup secret above is configured** (matches
+  the daily schedule -- not a better number than what's actually
+  implemented). **NOT YET ESTABLISHED** as a measured, incident-tested
+  number; it's a target derived from schedule frequency.
+- **RTO: NOT YET ESTABLISHED** for a full production recovery. A restore
+  drill was performed (see below) and the data-restore-and-verify portion
+  took well under 5 minutes for the current (~70 row) dataset -- but that
+  excludes incident detection, backup retrieval, new-instance provisioning,
+  a real `pg_restore` (not exercised -- see below), `DATABASE_URL` cutover,
+  and redeploy, none of which were measured.
+- **Restore drill: performed, with an important caveat.** This sandbox's
+  network egress cannot reach any `*.render.com` host directly (only the
+  Render API's own query tool, which runs one read-only SQL statement per
+  call and can't run `pg_dump`/`pg_restore`). So the actual drill extracted
+  production's full dataset (all ~70 rows, every populated table) via that
+  query tool and loaded it into a freshly-`alembic upgrade head`-migrated
+  **local** PostgreSQL instance, using the app's own SQLAlchemy models (so
+  custom column types serialize correctly). This is a genuine, evidence-
+  backed proof of schema/data/FK integrity and of real application queries
+  (`delivery.query_service.get_delivery_job`, `dlq.service.
+  list_dead_letter_jobs`, both exactly as the API calls them) succeeding
+  against the restored data, including confirming tenant isolation
+  survives a restore intact -- but it is **not** the same thing as a real
+  `pg_dump`/`pg_restore` cycle, and shouldn't be described as one. A true
+  `pg_dump`/`pg_restore` drill from an environment with real Render network
+  access is **NOT VERIFIED**.
+- **Migration startup race: audited, and a real fix implemented.** Single
+  Render instance (free plan, no autoscaling) means no steady-state
+  concurrent-migration risk -- but Render's deploy transition briefly runs
+  old and new containers together, and this already happened once (the
+  2026-09-12 cutover's two-instance log evidence in this file's earlier
+  Phase 1 section). Alembic has no built-in protection against two
+  processes both running `alembic upgrade head` at once. Added
+  `backend/scripts/migrate_with_lock.py`: wraps the migration in a Postgres
+  session-level advisory lock, so a second concurrent attempt blocks
+  (rather than racing) until the first finishes, then sees it's already at
+  head and exits cleanly. **Tested for real**: launched two genuinely
+  concurrent migration processes against a real local Postgres reset to
+  0019 -- process A acquired the lock, ran 0019->0020, released it; process
+  B then acquired the lock, ran `alembic upgrade head`, found it already at
+  head, and exited 0. No crash, no duplicate-index error, no race.
+- **Redis/Postgres durability boundary: re-confirmed, unchanged.** Postgres
+  remains the sole durable source of truth; Redis/Celery is transport only.
+  Nothing in this phase moved any business state into Redis.
+- **Connection pooling: audited, unchanged.** `create_async_engine(...,
+  pool_pre_ping=True)` per Celery task (see Phase 1's realtime-publisher
+  fix for why fresh-per-task) and a shared engine for the FastAPI process.
+  Render's free Postgres plan allows 100 connections
+  (`max_connections=100`, confirmed via direct query); current usage is far
+  below that. The restore drill added no new pooling pattern -- it's a
+  one-shot script, not part of the running application.
+- **Health check: still REQUIRES MANUAL ACTION**, unchanged from Phase 1 --
+  no tool available in this environment can set Render's `healthCheckPath`.
+  `/health/live` and `/health/ready` (`app/main.py`) remain correctly
+  implemented and unused by Render's own platform-level check.
+
 ## How to run the tests that protect this
 
 ```bash

@@ -27,7 +27,13 @@ set -e
 
 echo "===DEBUG HOST: $(python3 -c "import re,os; print(re.search(r'@([^:/]+)', os.environ.get('DATABASE_URL','MISSING')).group(1) if os.environ.get('DATABASE_URL') else 'MISSING')")==="
 
-alembic upgrade head
+# Phase 2 (database disaster recovery hardening): wrapped in a Postgres
+# advisory lock (scripts/migrate_with_lock.py) rather than calling alembic
+# directly -- during the 2026-09-12 database cutover, Render briefly ran two
+# instances of this container at once, both hitting `alembic upgrade head`
+# within seconds of each other. See that script's docstring and
+# docs/operations/DATABASE_RECOVERY.md section 20 for the full evidence.
+python3 scripts/migrate_with_lock.py
 
 celery -A app.workers.celery_app worker --loglevel=info --pool=solo --concurrency=1 &
 WORKER_PID=$!
