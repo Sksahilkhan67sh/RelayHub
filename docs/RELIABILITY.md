@@ -184,6 +184,28 @@ every DLQ query filters by `organization_id` via `tenant_select`. Bulk retry
 (`POST /v1/dlq/bulk-retry`) is the same single-job path called in a loop, not
 a separate implementation.
 
+**`attempt_number` is scoped to the current delivery cycle, not the job's
+full lifetime.** `retry_dead_letter_job` deliberately resets
+`job.attempt_number = 0` on replay, to give the job a full fresh retry
+budget rather than counting against the exhausted one. This means a job
+that has ever been replayed can have two (or more) `DeliveryAttempt` rows
+sharing the same `attempt_number` -- one from before the replay, one from
+after. Nothing is overwritten or lost (every attempt row persists,
+independently queryable by its own `id`/`started_at`), but `attempt_number`
+alone is not a safe way to identify or dedupe "the Nth attempt" for a job
+that has been through a replay. Found and fixed during Phase 1 hardening:
+`DeliveryJob.attempts`'s relationship ordering was `by="attempt_number"`,
+which has no defined tie-break order in SQL once that column isn't unique
+per job -- changed to `by="started_at"` (always monotonic, unaffected by
+the reset) so `job.attempts` is reliably chronological regardless. A
+stronger fix (an explicit `execution_number`/`replay_count` column stamped
+onto each attempt, giving a truly unique `(execution_number,
+attempt_number)` key) was deliberately **not** implemented in this phase --
+it's a real schema change for a problem that doesn't lose data today, just
+ambiguity in one derived field; revisit if a consumer ever needs to
+distinguish pre- and post-replay attempts programmatically rather than by
+`started_at` order. See `tests/integration/test_reliability_phase1_e2e.py`.
+
 ## Tenant isolation on this path specifically
 
 Every query touching `Event`, `DeliveryJob`, `DeliveryAttempt` in
@@ -223,6 +245,80 @@ detailed versions of these -- summarized here for this specific lifecycle:
 | The actual signed HTTP call | `delivery/executor.py`, `delivery/signing.py` |
 | SSRF/private-IP protection | `endpoints/security.py` (save-time), `delivery/connect_time_security.py` (connect-time) |
 
+## Phase 1 reliability hardening (2026-09-13)
+
+Findings from a dedicated hardening pass, each backed by direct evidence
+(code inspection, real-Postgres migration/test runs, and live Render log
+inspection where noted) rather than assumption:
+
+- **"delivery_job=... already claimed by another worker, skipping" is
+  correct, expected behavior, not a bug.** Confirmed via live production
+  logs (2026-09-11, a burst of the same job IDs claimed 2-3 times each in
+  quick succession, each duplicate correctly rejected by the CAS claim in
+  `executor.py`'s `_claim_job`) and via `test_duplicate_claim_is_prevented`.
+  This is the intended outcome of at-least-once scheduling racing against
+  itself (a worker restart re-triggering a re-enqueue, or two workers
+  legitimately racing on the same due job) -- exactly one of the racing
+  claims wins, the rest are safely no-ops, no delivery is duplicated or
+  lost. Do not remove or weaken this.
+- **429/5xx/timeout/connection-error retry-then-recover is verified
+  end-to-end**, not just at the single-attempt classification level --
+  see `test_reliability_phase1_e2e.py`'s `test_429_429_200_full_recovery_e2e`,
+  `test_503_503_200_full_recovery_e2e`, `test_timeout_then_successful_retry_e2e`,
+  `test_connection_error_then_successful_retry_e2e`, each asserting the
+  actual `delivery_attempts` rows (status codes, attempt numbers), not
+  just the job's final state.
+- **Queue-submission-after-DB-commit failure is already handled correctly**
+  (`events/service.py`'s `publish_event` and `dlq/service.py`'s
+  `retry_dead_letter_job` both commit the durable state change first, then
+  try to enqueue, catching and logging any broker failure rather than
+  raising -- reconciliation's stale-`queued` pass recovers it within
+  `STALE_DISPATCH_AFTER`). This is effectively a transactional-outbox
+  pattern already, just without a separate outbox table. No outbox was
+  added in this phase -- there's no demonstrated gap it would close.
+- **Composite index added:** `(status, next_attempt_at)` on `delivery_jobs`
+  (migration `0020`), justified by `retry/scheduler.py`'s
+  `enqueue_due_retries` query, which runs every 10 seconds forever.
+  Tested against real PostgreSQL 16: fresh-DB `upgrade head`,
+  upgrade-from-0019, and `downgrade` all confirmed.
+- **`(organization_id, status, completed_at)` composite index: NOT added.**
+  No query in the codebase filters on that exact triple. The nearest real
+  query, `logs/retention.py`'s daily `cleanup_expired_delivery_logs`, filters
+  `organization_id` + `completed_at` only (no `status` predicate --
+  `completed_at IS NOT NULL` already implies a terminal job), and isn't a
+  demonstrated bottleneck at current data volume. Revisit if retention or
+  log-search read volume grows.
+- **Health check endpoints already exist and are correctly designed**:
+  `GET /health/live` (cheap, no dependency checks -- process-alive only) and
+  `GET /health/ready` (checks DB + Redis, returns 503 if either is down) in
+  `app/main.py`. **REQUIRES MANUAL ACTION**: Render's service-level
+  `healthCheckPath` setting is currently empty, so Render itself isn't
+  using either endpoint for its own health signal (the Dockerfile's own
+  `HEALTHCHECK` directive does use `/health/live`, so container-level
+  health checking works; Render's platform-level check does not). No tool
+  available in this environment can change that setting -- set it to
+  `/health/live` (or `/health/ready` if you want Render to restart on a
+  dependency outage, not just a hung process) in the Render dashboard
+  under this service's Settings.
+- **Backup / PITR: NOT VERIFIED / REQUIRES MANUAL ACTION.** The current
+  production database (`relayhub-db-user`) is on Render's free Postgres
+  plan, which does not include automated backups or point-in-time
+  recovery -- confirmed via the Render API (`plan: "free"`). `scripts/
+  backup_db.sh` / `restore_db.sh` exist and are a correct manual
+  `pg_dump`/`pg_restore` pair, but nothing runs them on a schedule (no
+  cron, no CI job, no Render cron service). The free-plan database also
+  has a Render-side `expiresAt` -- the same mechanism that suspended the
+  previous database. **RPO/RTO: NOT YET ESTABLISHED** -- there is currently
+  no backup cadence to derive a real RPO from, and no rehearsed restore to
+  derive a real RTO from. Until a backup schedule exists (either an
+  upgraded Render plan with managed backups, or a scheduled job running
+  `backup_db.sh` against external storage), this is the single largest
+  reliability gap in the system and is outside what this phase could
+  safely implement without new infrastructure credentials.
+- **Redis has no persistence** (`persistenceMode: off`, free tier) --
+  unchanged finding from the prior audit, not addressed in this phase
+  (would require a paid Redis plan).
+
 ## How to run the tests that protect this
 
 ```bash
@@ -232,6 +328,7 @@ pytest tests/integration/test_retry_engine.py -v                                
 pytest tests/integration/test_reconciliation.py -v                                                      # crash safety
 pytest tests/integration/test_dlq.py -v                                                                 # DLQ + replay
 pytest tests/integration/test_events.py -v                                                              # idempotency
+pytest tests/integration/test_reliability_phase1_e2e.py -v                                              # mixed-code retry E2E, cross-tenant, replay ordering
 ```
 
 Or the full suite, which is what CI actually runs: `pytest -q` (SQLite) --
