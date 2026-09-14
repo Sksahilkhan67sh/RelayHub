@@ -68,6 +68,12 @@ jobs:
           DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
         run: |
           set +e
+          # Structurally safe: extracts only the text before "://" (the URL
+          # scheme, e.g. "postgresql" or "postgresql+asyncpg") -- never
+          # touches user/password/host. pg_dump requires a bare postgresql://
+          # or postgres:// scheme; anything else falls back to a local socket
+          # connection, which is exactly the failure seen in the previous run.
+          echo "::notice::DATABASE_URL scheme prefix (credentials never included): ${DATABASE_URL%%://*}"
           ./scripts/backup_db.sh ./backups 2> /tmp/backup_stderr.log
           STATUS=$?
           set -e
