@@ -68,6 +68,7 @@ jobs:
           DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
         run: |
           set +e
+          echo "::notice::DATABASE_URL length: ${#DATABASE_URL} chars. Raw scheme prefix: ${DATABASE_URL%%://*}"
           ./scripts/backup_db.sh ./backups 2> /tmp/backup_stderr.log
           STATUS=$?
           set -e
