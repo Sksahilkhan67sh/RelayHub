@@ -68,19 +68,15 @@ jobs:
           DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
         run: |
           set +e
-          echo "::notice::DATABASE_URL length: ${#DATABASE_URL} chars. Raw scheme prefix: ${DATABASE_URL%%://*}"
-          echo "::notice::Contains '@': $(echo "$DATABASE_URL" | grep -qF '@' && echo yes || echo no). Contains '://' exactly once: $(echo "$DATABASE_URL" | grep -oF '://' | wc -l). Slash count after scheme: $(echo "${DATABASE_URL#*://}" | grep -oF '/' | wc -l)"
-          if [[ "$DATABASE_URL" == postgresql+asyncpg://* ]]; then
-            echo "::notice::Starts-with-check: postgresql+asyncpg:// prefix MATCHES exactly."
-          else
-            echo "::notice::Starts-with-check: postgresql+asyncpg:// prefix DOES NOT MATCH. First 8 chars are: '${DATABASE_URL:0:8}' (scheme-only region, safe to show -- no credentials this early in any realistic DSN)."
-          fi
-          PRE_LEN=$(awk -v s="$DATABASE_URL" 'BEGIN{print index(s, "://") - 1}')
-          echo "::notice::Index of first '://' (0-based char count before it): $PRE_LEN. For reference, len(\"postgresql+asyncpg\")=19, len(\"postgresql\")=10."
           ./scripts/backup_db.sh ./backups 2> /tmp/backup_stderr.log
           STATUS=$?
           set -e
           if [ $STATUS -ne 0 ]; then
+            # Turn a bare "Process completed with exit code 1" into an
+            # actionable, credential-safe error: GitHub auto-redacts the
+            # literal registered secret value anywhere it appears in output;
+            # the sed pass is defense in depth against any URL-encoded/
+            # partial variant an exact-string match might miss.
             SANITIZED=$(sed -E 's#(://[^:@/]+):[^@/]*@#\1:***@#g' /tmp/backup_stderr.log | tail -c 3000)
             echo "::error::backup_db.sh failed (exit $STATUS). Sanitized stderr:%0A$(echo "$SANITIZED" | sed ':a;N;$!ba;s/\n/%0A/g')"
             exit $STATUS
