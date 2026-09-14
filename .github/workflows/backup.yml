@@ -75,6 +75,8 @@ jobs:
           else
             echo "::notice::Starts-with-check: postgresql+asyncpg:// prefix DOES NOT MATCH. First 8 chars are: '${DATABASE_URL:0:8}' (scheme-only region, safe to show -- no credentials this early in any realistic DSN)."
           fi
+          PRE_LEN=$(awk -v s="$DATABASE_URL" 'BEGIN{print index(s, "://") - 1}')
+          echo "::notice::Index of first '://' (0-based char count before it): $PRE_LEN. For reference, len(\"postgresql+asyncpg\")=19, len(\"postgresql\")=10."
           ./scripts/backup_db.sh ./backups 2> /tmp/backup_stderr.log
           STATUS=$?
           set -e
