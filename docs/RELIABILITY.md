@@ -392,6 +392,20 @@ for anyone reading this file top-to-bottom.
   `/health/live` and `/health/ready` (`app/main.py`) remain correctly
   implemented and unused by Render's own platform-level check.
 
+### Phase 2 completion sprint (2026-09-13) -- post-merge verification
+
+PR #21 merged as `c8a8fba` and deployed cleanly to production (`live` in
+under 2 minutes, no repeat of the earlier migration flakiness -- see
+`docs/operations/DATABASE_RECOVERY.md` section 16). The remaining Phase 2
+item -- an actual backup/restore from a genuine artifact -- is still
+blocked on one manual step: the `.github/workflows/backup.yml` workflow was
+manually triggered end-to-end and confirmed to behave exactly as designed
+(its secret-check gate correctly skipped every backup step with a visible
+warning, rather than failing or silently no-opping), but `BACKUP_DATABASE_URL`
+still has not been configured, so **no real backup exists yet** and RPO/RTO
+remain targets, not measurements. See `docs/operations/DATABASE_RECOVERY.md`
+sections 4, 9, 10, and 17 for the full, current, honestly-labeled status.
+
 ## How to run the tests that protect this
 
 ```bash
