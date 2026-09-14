@@ -64,16 +64,35 @@ Signs of a database incident:
 
 ## 4. Backup selection
 
-**Current backup capability: REQUIRES MANUAL ACTION.** As of this writing,
-there is no automated backup running against production. This phase added
-`.github/workflows/backup.yml`, a scheduled (daily, 03:17 UTC) GitHub
-Actions workflow that runs `scripts/backup_db.sh` (a `pg_dump --format=custom`
-wrapper) and uploads the result as a 35-day-retention build artifact --
-**but it does nothing until a repository owner adds a `BACKUP_DATABASE_URL`
-secret** (Settings -> Secrets and variables -> Actions, plain
-`postgresql://...` form, not `+asyncpg`). Until that secret exists, treat
-backup capability as: **AVAILABLE (manual only, via `scripts/backup_db.sh`
-run by hand) / NOT AUTOMATED**.
+**Current backup capability status (re-verified 2026-09-13, post-PR-#21-merge):
+AVAILABLE (manual) / NOT AUTOMATED / BACKUP EXECUTION BLOCKED.**
+
+The scheduled workflow (`.github/workflows/backup.yml`) exists on `main` and
+was manually triggered via `workflow_dispatch` to verify it end-to-end. It
+ran successfully (run concluded `success`), and its `check_secret` gate
+step correctly detected that **`BACKUP_DATABASE_URL` is not yet
+configured** as a repository secret -- every subsequent step (install
+`postgresql-client`, run backup, verify integrity, upload artifact) was
+correctly **skipped**, not failed, and the workflow logged the intended
+warning pointing back to this document. **This confirms the fail-safe
+"skip cleanly, don't fail every scheduled run" behavior works as designed
+-- but it also confirms no real backup exists yet.** A repository owner
+(or anyone with `secrets: write` on this repo -- this environment's
+credentials do not have that scope, confirmed by a `403` from GitHub's own
+secrets-listing API) must add:
+
+- **Secret name**: `BACKUP_DATABASE_URL`
+- **Secret value**: the production connection string in plain
+  `postgresql://user:password@host:5432/dbname` form (pg_dump's own scheme
+  -- strip `+asyncpg` if reusing the app's `DATABASE_URL` value)
+- **Where**: repository Settings -> Secrets and variables -> Actions ->
+  New repository secret
+
+Until that secret exists:
+- **BACKUP EXECUTION: BLOCKED / REQUIRES MANUAL ACTION.**
+- **No real backup artifact exists.** Do not treat any of this document's
+  restore-drill evidence (section 5 below) as having come from a real
+  `pg_dump` file -- it explicitly did not, and says so.
 
 To take a manual backup right now, from a machine with network access to
 Render's Postgres (this sandbox's own network egress does not have that
@@ -83,11 +102,11 @@ access -- see section 8):
 DATABASE_URL="postgresql://<user>:<password>@<host>:5432/<db>" ./scripts/backup_db.sh ./backups
 ```
 
-To select a backup for restore: once the scheduled workflow is running,
-download the desired run's artifact from the Actions tab (Actions ->
-"Database Backup" -> pick a run -> Artifacts). Artifacts expire after 35
-days -- if you need one older than that, it's gone; this is the real
-retention window, not a target.
+To select a backup for restore once real backups exist: download the
+desired run's artifact from the Actions tab (Actions -> "Database Backup"
+-> pick a run -> Artifacts). Artifacts expire after 35 days -- if you need
+one older than that, it's gone; that's the real retention window, not a
+target.
 
 ## 5. Restore process
 
@@ -206,6 +225,11 @@ explicit confirmation).
 - **NOT YET ESTABLISHED as a measured, tested number** -- this is a target
   based on schedule frequency, not something proven by an actual
   disaster-to-recovery timing exercise against production.
+- **Re-verified 2026-09-13 (Phase 2 completion sprint): still NOT
+  ESTABLISHED.** The `BACKUP_DATABASE_URL` secret has not been added, so
+  no real backup has run and there is nothing to measure an actual RPO
+  against yet. The 24-hour figure above remains a target, not an
+  observation.
 
 ## 10. RTO (Recovery Time Objective)
 
@@ -226,6 +250,12 @@ drill didn't measure. **Target RTO: NOT YET ESTABLISHED** for a full,
 production-realistic recovery -- only the data-restore-and-verify portion
 has been measured, and only against a small dataset in a local, non-Render
 environment.
+
+**Re-verified 2026-09-13 (Phase 2 completion sprint): still NOT
+ESTABLISHED.** No real backup artifact exists yet (see section 4), so a
+real end-to-end recovery timing exercise (detection through traffic
+restoration) has not been possible. Nothing changed here since the
+original drill -- restating rather than re-measuring would be dishonest.
 
 ## 11. Recovery dependencies
 
@@ -277,6 +307,50 @@ differ from the target in section 9).
   before running anything destructive (`--clean` on `pg_restore` drops
   existing objects in the *target* -- always double, triple check which
   connection string you're pointing at before running it).
+
+## 16. Migration lock -- production re-verification (2026-09-13)
+
+PR #21's advisory-lock fix (`backend/scripts/migrate_with_lock.py`) was
+tested locally before merge (two genuinely concurrent migration processes,
+one ran the migration, the other blocked then no-opped cleanly -- see this
+file's git history / PR #21 for that evidence). This section adds what
+became available only after merge: real production deploy evidence.
+
+- PR #21 merged as commit `c8a8fba`, deployed to Render as
+  `dep-daje1mvqj5pc73b5envg`.
+- **VERIFIED**: this deploy went `live` in under 2 minutes
+  (17:43:55 -> 17:45:38 UTC), with **no repeat of the earlier psycopg2/
+  concurrent-migration flakiness** observed during the previous database
+  cutover (see this file's Phase 1/2 history). Celery beat and the worker
+  started cleanly on the new instance immediately after, with no errors.
+- Production is confirmed at migration `0020` (query verified directly
+  against `relayhub-db-user`), consistent with a clean, non-racing
+  migration run.
+- This is **one clean deploy, not a repeated stress test against
+  production** (deliberately -- do not intentionally trigger concurrent
+  production deploys just to re-test this; the local concurrency test
+  already proved the mechanism, and production isn't a test environment).
+  Treat this as corroborating evidence, not a from-scratch production
+  proof.
+
+## 17. Backup failure visibility (Phase 2 completion sprint, 2026-09-13)
+
+**VERIFIED (workflow logic and a real execution), NOT VERIFIED (a real
+failure)**: manually triggered `.github/workflows/backup.yml` via
+`workflow_dispatch` against `main`. It completed with overall conclusion
+`success`, and its `check_secret` gate step correctly identified that
+`BACKUP_DATABASE_URL` is unset, causing every subsequent step to be
+**skipped** (visible per-step in the Actions run) rather than silently
+doing nothing or falsely reporting a completed backup. This confirms the
+"missing configuration is visible, not silent" property -- but it has not
+yet been proven what happens on a *real* failure (e.g. `pg_dump` erroring
+against a reachable-but-misbehaving database), since that requires the
+secret to exist first. No additional monitoring infrastructure was added:
+GitHub Actions' own run-history UI (red/failed runs, visible in the Actions
+tab, and optionally email/webhook notifications a repository owner can
+configure independently) is judged sufficient signal for this project's
+current scale -- building bespoke alerting on top would be exactly the
+kind of unnecessary infrastructure this project's principles argue against.
 
 ## Related documents
 
