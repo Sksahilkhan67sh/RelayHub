@@ -70,6 +70,11 @@ jobs:
           set +e
           echo "::notice::DATABASE_URL length: ${#DATABASE_URL} chars. Raw scheme prefix: ${DATABASE_URL%%://*}"
           echo "::notice::Contains '@': $(echo "$DATABASE_URL" | grep -qF '@' && echo yes || echo no). Contains '://' exactly once: $(echo "$DATABASE_URL" | grep -oF '://' | wc -l). Slash count after scheme: $(echo "${DATABASE_URL#*://}" | grep -oF '/' | wc -l)"
+          if [[ "$DATABASE_URL" == postgresql+asyncpg://* ]]; then
+            echo "::notice::Starts-with-check: postgresql+asyncpg:// prefix MATCHES exactly."
+          else
+            echo "::notice::Starts-with-check: postgresql+asyncpg:// prefix DOES NOT MATCH. First 8 chars are: '${DATABASE_URL:0:8}' (scheme-only region, safe to show -- no credentials this early in any realistic DSN)."
+          fi
           ./scripts/backup_db.sh ./backups 2> /tmp/backup_stderr.log
           STATUS=$?
           set -e
