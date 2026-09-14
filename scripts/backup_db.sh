@@ -21,20 +21,20 @@ mkdir -p "$OUTPUT_DIR"
 
 : "${DATABASE_URL:?Set DATABASE_URL (postgresql://user:pass@host:5432/dbname)}"
 
-# Accept either scheme: pg_dump/libpq only understands postgresql:// (or
-# postgres://), not the app's own postgresql+asyncpg:// -- normalize here
-# instead of just documenting it, since a real backup attempt against
-# production failed on exactly this (the secret was configured by reusing
-# the app's DATABASE_URL value verbatim, which is a completely reasonable
-# thing to do and shouldn't require remembering an extra manual edit).
-# Uses sed rather than a bash parameter-expansion glob: a bash
-# ${var/postgresql+asyncpg:\/\//postgresql://} substitution against the
-# real secret value did not match reliably in this repo's GitHub Actions
-# runner even though the literal substring was confirmed present at the
-# expected position -- switched to sed's plain (non-extended) regex, where
-# '+' is literal, matching on "postgresql+asyncpg" alone (no "://"
-# adjacency requirement) for a simpler, more robust substitution.
-DATABASE_URL="$(printf '%s' "$DATABASE_URL" | sed 's/postgresql+asyncpg/postgresql/')"
+# Accept whatever scheme is present (app's postgresql+asyncpg://, plain
+# postgresql://, or anything else) -- pg_dump/libpq only understands
+# postgresql:// or postgres://. Rather than matching the scheme text
+# literally (a bash glob substitution AND a sed literal-text substitution
+# both failed to match against the real secret in this repo's GitHub
+# Actions runner, despite the text visually appearing correct in every
+# diagnostic -- most likely an invisible/lookalike character introduced by
+# a copy-paste somewhere along the way, e.g. a non-ASCII '+' look-alike),
+# unconditionally discard everything up to and including the first "://"
+# (reliably locatable regardless of what the scheme text actually
+# contains) and prepend a known-good "postgresql://". This sidesteps the
+# scheme-matching problem entirely instead of trying to further diagnose
+# an encoding issue in a value this script should never print or store.
+DATABASE_URL="postgresql://$(printf '%s' "$DATABASE_URL" | sed 's#.*://##')"
 
 OUTPUT_FILE="$OUTPUT_DIR/relayhub-${TIMESTAMP}.dump"
 

@@ -15,9 +15,10 @@ set -euo pipefail
 DUMP_FILE="${1:?Usage: restore_db.sh <dump_file>}"
 : "${DATABASE_URL:?Set DATABASE_URL (postgresql://user:pass@host:5432/dbname)}"
 
-# See scripts/backup_db.sh's comment -- pg_restore/libpq only understands
-# postgresql://, not the app's postgresql+asyncpg://.
-DATABASE_URL="$(printf '%s' "$DATABASE_URL" | sed 's/postgresql+asyncpg/postgresql/')"
+# See scripts/backup_db.sh's comment -- unconditionally discard everything
+# up to and including the first "://" and prepend a known-good
+# "postgresql://", regardless of what the original scheme text says.
+DATABASE_URL="postgresql://$(printf '%s' "$DATABASE_URL" | sed 's#.*://##')"
 
 if [ ! -f "$DUMP_FILE" ]; then
   echo "Dump file not found: $DUMP_FILE" >&2
