@@ -66,30 +66,7 @@ jobs:
         if: steps.check_secret.outputs.configured == 'true'
         env:
           DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
-        run: |
-          set +e
-          # Structurally safe: extracts only the text before "://" (the URL
-          # scheme, e.g. "postgresql" or "postgresql+asyncpg") -- never
-          # touches user/password/host. pg_dump requires a bare postgresql://
-          # or postgres:// scheme; anything else falls back to a local socket
-          # connection, which is exactly the failure seen in the previous run.
-          echo "::notice::DATABASE_URL scheme prefix (credentials never included): ${DATABASE_URL%%://*}"
-          ./scripts/backup_db.sh ./backups 2> /tmp/backup_stderr.log
-          STATUS=$?
-          set -e
-          if [ $STATUS -ne 0 ]; then
-            # This sandbox's own diagnostic environment cannot reach GitHub's
-            # log/artifact blob storage directly, only api.github.com -- so on
-            # failure, surface the error as a check-run annotation (which IS
-            # reachable via the API) instead of only in the (unreachable) raw
-            # log. GitHub automatically redacts the literal registered secret
-            # value anywhere it appears in output; the extra sed pass below is
-            # defense in depth against any URL-encoded/partial variant of it
-            # that an exact-string match might miss.
-            SANITIZED=$(sed -E 's#(://[^:@/]+):[^@/]*@#\1:***@#g' /tmp/backup_stderr.log | tail -c 3000)
-            echo "::error::backup_db.sh failed (exit $STATUS). Sanitized stderr:%0A$(echo "$SANITIZED" | sed ':a;N;$!ba;s/\n/%0A/g')"
-            exit $STATUS
-          fi
+        run: ./scripts/backup_db.sh ./backups
 
       - name: Verify dump integrity (structural, not a full restore)
         if: steps.check_secret.outputs.configured == 'true'

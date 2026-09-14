@@ -15,6 +15,10 @@ set -euo pipefail
 DUMP_FILE="${1:?Usage: restore_db.sh <dump_file>}"
 : "${DATABASE_URL:?Set DATABASE_URL (postgresql://user:pass@host:5432/dbname)}"
 
+# See scripts/backup_db.sh's comment -- pg_restore/libpq only understands
+# postgresql://, not the app's postgresql+asyncpg://.
+DATABASE_URL="${DATABASE_URL/postgresql+asyncpg:\/\//postgresql://}"
+
 if [ ! -f "$DUMP_FILE" ]; then
   echo "Dump file not found: $DUMP_FILE" >&2
   exit 1

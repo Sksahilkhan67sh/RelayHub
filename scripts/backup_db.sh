@@ -21,6 +21,14 @@ mkdir -p "$OUTPUT_DIR"
 
 : "${DATABASE_URL:?Set DATABASE_URL (postgresql://user:pass@host:5432/dbname)}"
 
+# Accept either scheme: pg_dump/libpq only understands postgresql:// (or
+# postgres://), not the app's own postgresql+asyncpg:// -- normalize here
+# instead of just documenting it, since a real backup attempt against
+# production failed on exactly this (the secret was configured by reusing
+# the app's DATABASE_URL value verbatim, which is a completely reasonable
+# thing to do and shouldn't require remembering an extra manual edit).
+DATABASE_URL="${DATABASE_URL/postgresql+asyncpg:\/\//postgresql://}"
+
 OUTPUT_FILE="$OUTPUT_DIR/relayhub-${TIMESTAMP}.dump"
 
 echo "Backing up to $OUTPUT_FILE ..."
