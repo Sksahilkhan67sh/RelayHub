@@ -27,7 +27,14 @@ mkdir -p "$OUTPUT_DIR"
 # production failed on exactly this (the secret was configured by reusing
 # the app's DATABASE_URL value verbatim, which is a completely reasonable
 # thing to do and shouldn't require remembering an extra manual edit).
-DATABASE_URL="${DATABASE_URL/postgresql+asyncpg:\/\//postgresql://}"
+# Uses sed rather than a bash parameter-expansion glob: a bash
+# ${var/postgresql+asyncpg:\/\//postgresql://} substitution against the
+# real secret value did not match reliably in this repo's GitHub Actions
+# runner even though the literal substring was confirmed present at the
+# expected position -- switched to sed's plain (non-extended) regex, where
+# '+' is literal, matching on "postgresql+asyncpg" alone (no "://"
+# adjacency requirement) for a simpler, more robust substitution.
+DATABASE_URL="$(printf '%s' "$DATABASE_URL" | sed 's/postgresql+asyncpg/postgresql/')"
 
 OUTPUT_FILE="$OUTPUT_DIR/relayhub-${TIMESTAMP}.dump"
 
