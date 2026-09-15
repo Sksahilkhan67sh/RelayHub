@@ -125,6 +125,29 @@ realtime_reconnects_total = Counter(
     "relayhub_realtime_reconnects_total", "SSE stream connections established (includes client reconnects)"
 )
 
+# --- Celery task failures (this phase) ---
+# Unlike the delivery-specific counters above (which are business outcomes:
+# a 500 from a customer's endpoint is an expected, tracked thing, not a bug),
+# this counts *unexpected* exceptions escaping a Celery task entirely --
+# e.g. a real bug in task code, not a delivery attempt's own classified
+# failure. In-process Counter, same documented per-worker-process tradeoff as
+# the other in-process counters above (a Celery worker serves no HTTP
+# endpoint of its own to scrape) -- see celery_app.py's task_failure signal
+# handler for where this is incremented.
+celery_task_failures_total = Counter(
+    "relayhub_celery_task_failures_total",
+    "Celery tasks that raised an unhandled exception (not a classified delivery failure)",
+    labelnames=["task_name"],
+)
+
+# --- PostgreSQL connection pool (this phase) ---
+DB_POOL_CHECKED_OUT = Gauge(
+    "relayhub_db_pool_checked_out", "Connections currently checked out of the API process's SQLAlchemy pool"
+)
+DB_POOL_SIZE = Gauge(
+    "relayhub_db_pool_size", "Configured size of the API process's SQLAlchemy pool (excludes overflow)"
+)
+
 
 _QUEUE_DEPTH_STATUSES = (
     DeliveryJobStatus.QUEUED.value,
@@ -166,7 +189,27 @@ async def refresh_reliability_gauges(db: AsyncSession) -> None:
         DLQ_RATE.set(delivery_metrics["dlq_rate"])
     STUCK_JOBS_COUNT.set(delivery_metrics["stuck_jobs_count"])
 
+    _refresh_db_pool_gauges()
+
     await _refresh_insights_gauges(db)
+
+
+def _refresh_db_pool_gauges() -> None:
+    """SQLAlchemy's QueuePool tracks checked-out/size in-process already --
+    no query, no I/O, just reading counters the pool itself already
+    maintains. SQLite (tests, local dev) uses StaticPool, which has no
+    `.checkedout()`/`.size()` -- skip cleanly rather than raise, same
+    "unconfigured/unsupported dependency is a no-op, not a crash" pattern as
+    app/core/tracing.py.
+    """
+    from app.db.session import engine
+
+    pool = engine.pool
+    checked_out = getattr(pool, "checkedout", None)
+    size = getattr(pool, "size", None)
+    if callable(checked_out) and callable(size):
+        DB_POOL_CHECKED_OUT.set(checked_out())
+        DB_POOL_SIZE.set(size())
 
 
 async def _refresh_insights_gauges(db: AsyncSession) -> None:
