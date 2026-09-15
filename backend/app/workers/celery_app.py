@@ -1,7 +1,7 @@
 import threading
 
 from celery import Celery
-from celery.signals import worker_process_init, worker_process_shutdown
+from celery.signals import task_failure, worker_process_init, worker_process_shutdown
 
 from app.core.config import settings
 
@@ -144,6 +144,13 @@ def _start_worker_heartbeat(**kwargs) -> None:
 
     setup_tracing("relayhub-worker")
 
+    # Structured (JSON) logging, same lifecycle -- see app/core/logging_config.py.
+    # Worker processes previously logged with Python's unconfigured default
+    # ("handler of last resort"), same gap the API process had before this phase.
+    from app.core.logging_config import configure_logging
+
+    configure_logging()
+
     hostname = socket.gethostname()
     pid = os.getpid()
     worker_id = get_worker_id()
@@ -162,3 +169,28 @@ def _start_worker_heartbeat(**kwargs) -> None:
 def _stop_worker_heartbeat(**kwargs) -> None:
     if _heartbeat_stop_event is not None:
         _heartbeat_stop_event.set()
+
+
+# Phase 3 observability: previously nothing recorded an unhandled exception
+# escaping a Celery task -- Celery itself marks the task failed internally,
+# but that's only visible by inspecting Celery's own state/logs, not through
+# this codebase's structured logging or Prometheus metrics. This is
+# deliberately scoped to *unexpected* exceptions only (a real bug in task
+# code), not classified delivery failures -- those are tracked separately
+# and correctly as business outcomes (see app/core/metrics.py's
+# DELIVERIES_LAST_HOUR/DLQ_RATE), not errors.
+@task_failure.connect
+def _record_task_failure(sender=None, task_id=None, exception=None, **kwargs) -> None:
+    import logging
+
+    from app.core.metrics import celery_task_failures_total
+
+    task_name = getattr(sender, "name", None) or "unknown"
+    celery_task_failures_total.labels(task_name=task_name).inc()
+    logging.getLogger("app.workers.celery_app").error(
+        "celery_task_failed task_name=%s task_id=%s exception_class=%s",
+        task_name,
+        task_id,
+        type(exception).__name__ if exception is not None else "unknown",
+        extra={"task_name": task_name, "task_id": task_id},
+    )

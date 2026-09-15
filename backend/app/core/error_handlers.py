@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, Sequence
 
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+
+logger = logging.getLogger(__name__)
 
 
 def _envelope(*, code: str, message: str, request_id: str | None, details: object = None) -> dict[str, Any]:
@@ -57,6 +60,19 @@ def register_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
         request_id = getattr(request.state, "request_id", None)
+        # This was previously a silent gap: an unhandled exception produced a
+        # generic response to the client (correctly -- no traceback should ever
+        # reach an API client) but was never recorded anywhere server-side
+        # either, so a real bug behind a 500 was invisible without independently
+        # reproducing it. logger.exception() captures the full traceback into
+        # the server-side structured log (see app/core/logging_config.py) --
+        # never into the response body.
+        logger.exception(
+            "unhandled_exception method=%s path=%s",
+            request.method,
+            request.url.path,
+            extra={"request_id": request_id, "http_method": request.method, "http_path": request.url.path},
+        )
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content=_envelope(code="internal_error", message="An unexpected error occurred", request_id=request_id),

@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.error_handlers import register_error_handlers
 from app.core.health import check_database, check_redis
+from app.core.logging_config import configure_logging
 from app.core.metrics import refresh_reliability_gauges
 from app.core.tracing import setup_tracing
 from app.db.session import get_db
@@ -43,6 +44,11 @@ app = FastAPI(
     docs_url="/docs" if settings.ENV != "production" else None,
     redoc_url=None,
 )
+
+# Structured (JSON) logging with automatic request_id attachment -- see
+# app/core/logging_config.py. Configured before anything else in this file
+# logs a line, so startup logging is structured too.
+configure_logging()
 
 # Order matters: Starlette applies middleware in reverse of add order, so the last
 # one added here runs first on the way in / last on the way out. Body-size rejection
