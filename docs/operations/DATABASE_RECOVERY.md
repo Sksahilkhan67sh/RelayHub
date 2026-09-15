@@ -64,35 +64,87 @@ Signs of a database incident:
 
 ## 4. Backup selection
 
-**Current backup capability status (re-verified 2026-09-13, post-PR-#21-merge):
-AVAILABLE (manual) / NOT AUTOMATED / BACKUP EXECUTION BLOCKED.**
+**Current backup capability status (re-verified 2026-09-14, this session):
+CONFIGURED (secret present) / TWO REAL CODE BUGS FOUND AND FIXED / BACKUP
+EXECUTION STILL BLOCKED on one remaining data-entry issue in the secret's
+value -- REQUIRES MANUAL ACTION.**
 
-The scheduled workflow (`.github/workflows/backup.yml`) exists on `main` and
-was manually triggered via `workflow_dispatch` to verify it end-to-end. It
-ran successfully (run concluded `success`), and its `check_secret` gate
-step correctly detected that **`BACKUP_DATABASE_URL` is not yet
-configured** as a repository secret -- every subsequent step (install
-`postgresql-client`, run backup, verify integrity, upload artifact) was
-correctly **skipped**, not failed, and the workflow logged the intended
-warning pointing back to this document. **This confirms the fail-safe
-"skip cleanly, don't fail every scheduled run" behavior works as designed
--- but it also confirms no real backup exists yet.** A repository owner
-(or anyone with `secrets: write` on this repo -- this environment's
-credentials do not have that scope, confirmed by a `403` from GitHub's own
-secrets-listing API) must add:
+`BACKUP_DATABASE_URL` is now configured (confirmed indirectly: the
+workflow's `check_secret` gate no longer skips the backup steps -- it
+attempts real work). Manually triggering `.github/workflows/backup.yml`
+(`workflow_dispatch`, repeatedly, against a scratch branch -- never against
+`main` until this was resolved) surfaced two genuine bugs, found and fixed
+for real, plus one remaining issue that is not a code problem:
 
-- **Secret name**: `BACKUP_DATABASE_URL`
-- **Secret value**: the production connection string in plain
-  `postgresql://user:password@host:5432/dbname` form (pg_dump's own scheme
-  -- strip `+asyncpg` if reusing the app's `DATABASE_URL` value)
-- **Where**: repository Settings -> Secrets and variables -> Actions ->
-  New repository secret
+1. **Fixed: `scripts/backup_db.sh` / `restore_db.sh` were committed without
+   the executable bit** (`git ls-files -s` showed `100644`, not `100755`),
+   so `./scripts/backup_db.sh` failed immediately with `exit 126`
+   ("permission denied") before ever touching the database. Fixed via
+   `git update-index --chmod=+x` on both scripts.
+2. **Fixed: scheme normalization didn't actually normalize.** After the
+   exec-bit fix, the next failure was `pg_dump: error: connection to
+   server on socket "/var/run/postgresql/.s.PGSQL.5432" failed` -- the
+   classic libpq behavior when it doesn't recognize the URL's scheme and
+   falls back to a local socket. Diagnosed **without ever printing,
+   logging, or exposing the actual secret value** -- using a sequence of
+   structurally-safe checks (string length, an `awk index()` numeric
+   position, a `[[ == prefix* ]]` boolean match, a raw scheme-prefix
+   string that itself contains no credentials) surfaced via GitHub's
+   check-run annotations API (chosen specifically because this sandbox's
+   network egress can reach `api.github.com` but not GitHub's log/artifact
+   blob storage, so annotations were the only channel available for
+   real diagnostic feedback). Confirmed the secret does contain
+   `postgresql+asyncpg://` at the expected position (`+asyncpg` scheme
+   from the app's own `DATABASE_URL` convention) -- but two different
+   attempts to match and strip that exact scheme text (a bash parameter-
+   expansion glob, then a `sed` literal-text substitution) both
+   mysteriously failed to match against the *real* secret despite working
+   correctly against a locally-constructed test value with identical
+   visible text (most likely explanation: a non-ASCII look-alike
+   character, e.g. a fullwidth `+`, introduced somewhere the value passed
+   through before being pasted into the GitHub secret). Rather than keep
+   chasing that, the final fix doesn't try to match the scheme text at
+   all: it unconditionally discards everything up to and including the
+   first `://` (reliably locatable regardless of what precedes it, since
+   `:`, `/` have no look-alike ambiguity risk here) and prepends a known-
+   good `postgresql://`. Tested locally against both the asyncpg-style and
+   an already-plain form -- both now normalize identically and correctly.
+3. **Confirmed NOT a code problem, REQUIRES MANUAL ACTION**: with both
+   bugs above fixed, `pg_dump` now correctly attempts a real network
+   connection (proof: the error changed from a local-socket message to
+   `pg_dump: error: could not translate host name "dpg-dajq11jm8hqs7399mus0-a"
+   to address: Temporary failure in name resolution` -- a genuine DNS
+   failure, meaning the connection string is now being parsed correctly).
+   **That hostname does not match `relayhub-db-user`'s actual instance id**
+   (`dpg-daifi0h594qs738i36t0-a`, confirmed via a direct Render API query
+   at the same time) **at all.** This means the `BACKUP_DATABASE_URL`
+   secret's value itself is wrong -- most likely Render's "Internal
+   Database URL" was used (only resolvable from inside Render's own
+   network, never from GitHub Actions) instead of the "External Database
+   URL", or the value was mistyped/copied from a different database
+   entirely. **This cannot be fixed from this environment** -- it requires
+   the actual correct connection string, which this environment does not
+   have and should not try to guess or construct.
 
-Until that secret exists:
-- **BACKUP EXECUTION: BLOCKED / REQUIRES MANUAL ACTION.**
-- **No real backup artifact exists.** Do not treat any of this document's
-  restore-drill evidence (section 5 below) as having come from a real
-  `pg_dump` file -- it explicitly did not, and says so.
+**Required manual fix**: in the Render dashboard, open the `relayhub-db-user`
+Postgres instance (id `dpg-daifi0h594qs738i36t0-a`), copy its **External
+Database URL** (not Internal), and update the `BACKUP_DATABASE_URL` GitHub
+secret with that value (either scheme form works now -- the scripts
+normalize it either way).
+
+Until that's corrected:
+- **BACKUP EXECUTION: BLOCKED / REQUIRES MANUAL ACTION** (data-entry issue
+  in the secret's value, not a workflow or script bug -- both of those are
+  now fixed and verified).
+- **No real backup artifact exists yet.** Do not treat any of this
+  document's restore-drill evidence (section 5 below) as having come from
+  a real `pg_dump` file -- it explicitly did not, and says so.
+
+The workflow's `Run backup` step now permanently surfaces a sanitized,
+actionable error as a check-run annotation on any future failure (not just
+a bare "exit code 1") -- this itself is a real, lasting improvement to
+backup-failure visibility (see section 17), independent of when the
+hostname gets corrected.
 
 To take a manual backup right now, from a machine with network access to
 Render's Postgres (this sandbox's own network egress does not have that
@@ -103,6 +155,7 @@ DATABASE_URL="postgresql://<user>:<password>@<host>:5432/<db>" ./scripts/backup_
 ```
 
 To select a backup for restore once real backups exist: download the
+
 desired run's artifact from the Actions tab (Actions -> "Database Backup"
 -> pick a run -> Artifacts). Artifacts expire after 35 days -- if you need
 one older than that, it's gone; that's the real retention window, not a
@@ -230,6 +283,12 @@ explicit confirmation).
   no real backup has run and there is nothing to measure an actual RPO
   against yet. The 24-hour figure above remains a target, not an
   observation.
+- **Re-verified 2026-09-14 (real backup/restore execution session): still
+  NOT ESTABLISHED.** The secret now exists and two real code bugs were
+  found and fixed along the way (see section 4), but the secret's
+  configured hostname doesn't match `relayhub-db-user` at all -- still no
+  real backup has completed successfully. The 24-hour target stands
+  unchanged.
 
 ## 10. RTO (Recovery Time Objective)
 
@@ -256,6 +315,11 @@ ESTABLISHED.** No real backup artifact exists yet (see section 4), so a
 real end-to-end recovery timing exercise (detection through traffic
 restoration) has not been possible. Nothing changed here since the
 original drill -- restating rather than re-measuring would be dishonest.
+
+**Re-verified 2026-09-14 (real backup/restore execution session): still
+NOT ESTABLISHED.** Same reason -- no real backup artifact exists yet (see
+section 4's hostname mismatch). This section will only get real numbers
+once a genuine backup succeeds and an actual restore is performed from it.
 
 ## 11. Recovery dependencies
 
