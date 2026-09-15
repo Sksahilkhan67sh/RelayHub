@@ -66,7 +66,21 @@ jobs:
         if: steps.check_secret.outputs.configured == 'true'
         env:
           DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
-        run: ./scripts/backup_db.sh ./backups
+        run: |
+          set +e
+          ./scripts/backup_db.sh ./backups 2> /tmp/backup_stderr.log
+          STATUS=$?
+          set -e
+          if [ $STATUS -ne 0 ]; then
+            # Turn a bare "Process completed with exit code 1" into an
+            # actionable, credential-safe error: GitHub auto-redacts the
+            # literal registered secret value anywhere it appears in output;
+            # the sed pass is defense in depth against any URL-encoded/
+            # partial variant an exact-string match might miss.
+            SANITIZED=$(sed -E 's#(://[^:@/]+):[^@/]*@#\1:***@#g' /tmp/backup_stderr.log | tail -c 3000)
+            echo "::error::backup_db.sh failed (exit $STATUS). Sanitized stderr:%0A$(echo "$SANITIZED" | sed ':a;N;$!ba;s/\n/%0A/g')"
+            exit $STATUS
+          fi
 
       - name: Verify dump integrity (structural, not a full restore)
         if: steps.check_secret.outputs.configured == 'true'

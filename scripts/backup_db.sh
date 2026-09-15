@@ -21,6 +21,21 @@ mkdir -p "$OUTPUT_DIR"
 
 : "${DATABASE_URL:?Set DATABASE_URL (postgresql://user:pass@host:5432/dbname)}"
 
+# Accept whatever scheme is present (app's postgresql+asyncpg://, plain
+# postgresql://, or anything else) -- pg_dump/libpq only understands
+# postgresql:// or postgres://. Rather than matching the scheme text
+# literally (a bash glob substitution AND a sed literal-text substitution
+# both failed to match against the real secret in this repo's GitHub
+# Actions runner, despite the text visually appearing correct in every
+# diagnostic -- most likely an invisible/lookalike character introduced by
+# a copy-paste somewhere along the way, e.g. a non-ASCII '+' look-alike),
+# unconditionally discard everything up to and including the first "://"
+# (reliably locatable regardless of what the scheme text actually
+# contains) and prepend a known-good "postgresql://". This sidesteps the
+# scheme-matching problem entirely instead of trying to further diagnose
+# an encoding issue in a value this script should never print or store.
+DATABASE_URL="postgresql://$(printf '%s' "$DATABASE_URL" | sed 's#.*://##')"
+
 OUTPUT_FILE="$OUTPUT_DIR/relayhub-${TIMESTAMP}.dump"
 
 echo "Backing up to $OUTPUT_FILE ..."
