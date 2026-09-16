@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.queue_client import QueueClient, get_queue_client
 from app.common.realtime_publisher import RealtimePublisher, get_realtime_publisher
+from app.common.route_rate_limit import org_rate_limit
 from app.db.session import get_db
 from app.modules.auth.dependencies import AuthContext, require_role
 from app.modules.auth.models import Role
@@ -13,6 +14,23 @@ from app.modules.dlq.schemas import BulkRetryRequest, BulkRetryResponse, DeadLet
 from app.modules.retry.schedule import DEFAULT_MAX_ATTEMPTS
 
 router = APIRouter(prefix="/dlq", tags=["dead-letter-queue"])
+
+# Replay is the most resource-amplifying authenticated operation in the API: a
+# single bulk-retry call re-enqueues up to 500 delivery jobs (see
+# BulkRetryRequest's max_length), each of which becomes real outbound HTTP work
+# for a delivery worker. Before Phase 4 these endpoints had no rate limit at
+# all, so a caller (or a buggy client in a loop) could saturate the delivery
+# queue with replays. Limits are per-organization and generous enough not to
+# interfere with legitimate incident recovery -- an operator working through a
+# DLQ backlog after an outage will not hit these -- while bounding the worst
+# case. Export is separately limited because it scans and serializes the whole
+# DLQ for an org into CSV in one request.
+DLQ_REPLAY_LIMIT = 60
+DLQ_REPLAY_WINDOW_SECONDS = 60
+DLQ_BULK_REPLAY_LIMIT = 10
+DLQ_BULK_REPLAY_WINDOW_SECONDS = 60
+DLQ_EXPORT_LIMIT = 10
+DLQ_EXPORT_WINDOW_SECONDS = 60
 
 
 def _to_out(job) -> DeadLetterJobOut:
@@ -52,16 +70,23 @@ async def list_dead_letter_jobs(
 
 @router.get("/export")
 async def export_dead_letter_jobs(
+    response: Response,
     endpoint_id: uuid.UUID | None = Query(default=None),
     auth: AuthContext = Depends(require_role(Role.VIEWER)),
     db: AsyncSession = Depends(get_db),
+    _rate_limit: None = Depends(
+        org_rate_limit("dlq-export", limit=DLQ_EXPORT_LIMIT, window_seconds=DLQ_EXPORT_WINDOW_SECONDS)
+    ),
 ):
     csv_content = await service.export_dead_letter_jobs_csv(db, organization_id=auth.organization_id, endpoint_id=endpoint_id)
-    return Response(
-        content=csv_content,
-        media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=relayhub_dead_letter_export.csv"},
-    )
+    # NOTE: this handler constructs its own Response rather than using the
+    # injected `response` object, so rate-limit headers set by the
+    # org_rate_limit dependency would be discarded. Carry them over
+    # explicitly. (The 429 path is unaffected either way -- that raises an
+    # HTTPException with its own headers before this handler ever runs.)
+    headers = {"Content-Disposition": "attachment; filename=relayhub_dead_letter_export.csv"}
+    headers.update({k: v for k, v in response.headers.items() if k.lower().startswith("x-ratelimit-")})
+    return Response(content=csv_content, media_type="text/csv", headers=headers)
 
 
 @router.get("/{job_id}", response_model=DeadLetterJobOut)
@@ -80,6 +105,9 @@ async def retry_dead_letter_job(
     db: AsyncSession = Depends(get_db),
     queue_client: QueueClient = Depends(get_queue_client),
     realtime_publisher: RealtimePublisher = Depends(get_realtime_publisher),
+    _rate_limit: None = Depends(
+        org_rate_limit("dlq-replay", limit=DLQ_REPLAY_LIMIT, window_seconds=DLQ_REPLAY_WINDOW_SECONDS)
+    ),
 ):
     job = await service.retry_dead_letter_job(
         db,
@@ -117,6 +145,9 @@ async def bulk_retry_dead_letter_jobs(
     db: AsyncSession = Depends(get_db),
     queue_client: QueueClient = Depends(get_queue_client),
     realtime_publisher: RealtimePublisher = Depends(get_realtime_publisher),
+    _rate_limit: None = Depends(
+        org_rate_limit("dlq-bulk-replay", limit=DLQ_BULK_REPLAY_LIMIT, window_seconds=DLQ_BULK_REPLAY_WINDOW_SECONDS)
+    ),
 ):
     retried, skipped = await service.bulk_retry_dead_letter_jobs(
         db,
