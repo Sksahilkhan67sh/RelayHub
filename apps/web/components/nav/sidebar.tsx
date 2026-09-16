@@ -40,6 +40,9 @@ export const NAV_ITEMS = [
   { href: "/deliveries", label: "Deliveries", icon: Send },
   { href: "/retry-queue", label: "Retry Queue", icon: RotateCcw },
   { href: "/dlq", label: "Dead Letter Queue", icon: Inbox },
+  // Developer tooling. Client-side only (the signing secret never leaves the
+  // browser) -- see the page's own docstring and docs/WEBHOOK_DEBUGGING.md.
+  { href: "/developer/signature-inspector", label: "Signature Inspector", icon: ShieldCheck },
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
   // Phase 3 AI Intelligence Layer -- deliberately its own nav item, not folded
   // into Analytics: Analytics is raw metrics/reporting, Intelligence is derived
