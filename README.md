@@ -166,6 +166,11 @@ There is no "Projects" resource in the backend, and none of the SDKs invent one.
 - [`docs/architecture/diagrams.md`](docs/architecture/diagrams.md) — Mermaid diagrams for the major flows
 - [`docs/RELIABILITY.md`](docs/RELIABILITY.md) — delivery/retry/DLQ lifecycle, crash safety, idempotency, and the invariants that protect them
 
+**Developer experience:**
+- [`docs/DEVELOPER_EXPERIENCE.md`](docs/DEVELOPER_EXPERIENCE.md) — map of developer tooling: test events, signature inspector, dashboard debugging surfaces
+- [`docs/WEBHOOK_DEBUGGING.md`](docs/WEBHOOK_DEBUGGING.md) — verifying signatures, reading error categories, debugging retries and the DLQ
+- [`docs/LOCAL_DEVELOPMENT.md`](docs/LOCAL_DEVELOPMENT.md) — end-to-end local loop: send an event, force a failure, watch retries, replay from the DLQ
+
 **Reference:**
 - `docs/api/` — API reference, one file per backend module
 - `docs/self-hosting/README.md` — deployment/self-hosting guide
