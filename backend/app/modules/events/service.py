@@ -73,7 +73,12 @@ async def publish_event(
     db: AsyncSession,
     *,
     organization_id: uuid.UUID,
-    api_key_id: uuid.UUID,
+    # Nullable: dashboard-originated test events (POST /v1/events/test) are
+    # authenticated by session rather than by an API key, and leaving this null
+    # is what distinguishes them from API-key traffic afterwards. The column
+    # itself has always been nullable (see Event.api_key_id); this signature
+    # just now reflects that.
+    api_key_id: uuid.UUID | None,
     data: PublishEventRequest,
     request_id: str,
     queue_client: QueueClient,
